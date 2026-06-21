@@ -21,9 +21,6 @@ A base de dados utilizada para o projeto inteiro foi, principalmente, da FBref q
 ### 4. Ásia (AFC)
     - AFC Champions League: https://fbref.com/en/comps/664/
 
-### 5. África (CAF)
-    - CAF Champions League: https://www.kaggle.com/datasets/davidcariboo/player-scores
-
 ## Competições Mundiais
 
 ### 1. Mundial de Clubes
