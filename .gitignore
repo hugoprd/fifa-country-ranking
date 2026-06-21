@@ -1,5 +1,11 @@
 # data
-data/raw
-data/processed
-data/refined
+data/raw/*
+data/processed/*
+data/refined/*
+data/external_metadata/*
 !data/README.md
+
+# logs
+logs/*
+!logs/__init__.py
+!logs/set_logger.py
