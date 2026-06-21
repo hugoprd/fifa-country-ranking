@@ -19,8 +19,8 @@ setup_logger(log_file_path=LOG_FILE, log_name=LOG_NAME, overwrite=True)
 logger.info("=" * 32)
 logger.info("extract_external_metadata.py LOG INITIALIZED.")
 
-EXTERNAL_METADATA_DIR = ROOT_DIR / "data" / "external_metadata"
-EXTERNAL_METADATA_DIR.mkdir(parents=True, exist_ok=True)
+EXTERNAL_METADATA_PATH = ROOT_DIR / "data" / "external_metadata"
+EXTERNAL_METADATA_PATH.mkdir(parents=True, exist_ok=True)
 
 
 def extract_external_metadata():
@@ -71,7 +71,7 @@ def extract_external_metadata():
 
         df_metadata_caf = df_metadata_caf.drop_duplicates(subset=["team_name"])
 
-        out_path = EXTERNAL_METADATA_DIR / "caf_teams.csv"
+        out_path = EXTERNAL_METADATA_PATH / "caf_teams.csv"
         df_metadata_caf.to_csv(out_path, index=False)
 
         logger.success(f"Metadata extraction completed. {len(df_metadata_caf)} CAF clubs saved to '{out_path}'.")
