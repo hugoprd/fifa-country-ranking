@@ -7,6 +7,7 @@ sys.path.append(str(ROOT_DIR))
 from loguru import logger
 from logs.set_logger import setup_logger
 import pandas as pd
+import difflib
 from tqdm import tqdm
 
 LOG_FILE = ROOT_DIR / "logs"
@@ -137,6 +138,97 @@ def _calculate_confederation_weights(club_world_cup_df: pd.DataFrame) -> dict[st
     return weights
 
 
+def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """
+    Reads the raw Transfermarkt players data ('appearances.csv' and 'players.csv') and enriches it with the
+    confederation weights calculated previously.
+    """
+    logger.info("[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Starting player enrichment...")
+
+    players_path = RAW_DATA_PATH / "players.csv"
+    appearances_path = RAW_DATA_PATH / "appearances.csv"
+    clubs_path = RAW_DATA_PATH / "clubs.csv"
+
+    if not all(p.exists() for p in [players_path, appearances_path, clubs_path]):
+        logger.error(
+            "[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Files of Transfermarkt not found in raw/ (players, appearances ou clubs)."
+        )
+
+        return None, None
+
+    df_players = pd.read_csv(players_path)
+    df_appearances = pd.read_csv(appearances_path)
+    df_clubs = pd.read_csv(clubs_path)
+
+    # assuming that the team column in the Kaggle file is named 'current_club_id'
+
+    column_club_name = "current_club_name"
+
+    if column_club_name not in df_players.columns:
+        logger.error(
+            f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] The column '{column_club_name}' does not exist in players.csv!"
+        )
+        logger.error(f"Available columns: {list(df_players.columns)}")
+
+        return
+
+    teams_wiki_list = df_world_teams["team_name"].dropna().tolist()
+
+    def _find_team(tm_name: str) -> str | None:
+        """
+        Returns the best match for a team name from Transfermarkt in the list of team names from Wikipedia.
+        It first tries a direct substring match, and if that fails, it uses fuzzy matching to find the closest name.
+        """
+        tm_name_str = str(tm_name).lower()
+
+        # strategy A: the name of the Wiki is contained in the full name of Transfermarkt?
+        # eg.: find "Flamengo" within "Clube de Regatas do Flamengo"
+        for wiki_name in teams_wiki_list:
+            if str(wiki_name).lower() in tm_name_str:
+                return wiki_name
+
+        # strategy B: If not found, use text similarity (Fuzzy)
+        matches = difflib.get_close_matches(tm_name_str, [str(w).lower() for w in teams_wiki_list], n=1, cutoff=0.85)
+        if matches:
+            # returns the original name from Wikipedia that matched
+            for wiki_name in teams_wiki_list:
+                if str(wiki_name).lower() == matches[0]:
+                    return wiki_name
+
+        return None
+
+    df_clubs["matched_wiki_name"] = df_clubs["name"].apply(_find_team)
+
+    # now that Transfermarkt knows who he is in Wikipedia, the tables are merged
+    # to bring the confederation and weight information to the players table through the club_id
+    df_clubs = df_clubs.merge(
+        df_world_teams[["team_name", "confederation", "confederation_weight"]],
+        left_on="matched_wiki_name",
+        right_on="team_name",
+        how="left",
+    )
+
+    df_bridge = df_clubs[["club_id", "confederation_weight"]].dropna()
+
+    df_players_enriched = df_players.merge(df_bridge, left_on="current_club_id", right_on="club_id", how="left")
+
+    df_players_enriched["confederation_weight"] = df_players_enriched["confederation_weight"].fillna(0.1)
+    df_players_enriched["confederation_weight"] = df_players_enriched["confederation_weight"].astype(float)
+
+    if "club_id" in df_players_enriched.columns:
+        df_players_enriched = df_players_enriched.drop(columns=["club_id"])
+
+    # appearances receives a basic cleanup to prevent the ML model from crashing
+    df_appearances = df_appearances.dropna(subset=["player_id", "game_id"])
+
+    logger.success(
+        f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Enrichment completed. Total players: {len(df_players_enriched)} ;"
+        f"Total appearances: {len(df_appearances)}"
+    )
+
+    return df_players_enriched, df_appearances
+
+
 def process_data():
     """
     Processes the downloaded Club World Cup data and external metadata.
@@ -160,13 +252,26 @@ def process_data():
             # itś filled it with a base value (e.g., 0.1 or 0.0)
             df_world_teams["confederation_weight"] = df_world_teams["confederation_weight"].fillna(0.1)
 
+            players_df, appearances_df = _process_transfermarkt_players(df_world_teams)
+
             processed_teams_file = PROCESSED_DATA_PATH / "processed_world_teams.csv"
             df_world_teams.to_csv(processed_teams_file, index=False)
 
             processed_cwc_file = PROCESSED_DATA_PATH / "processed_club_world_cup_data.csv"
             club_world_cup_df.to_csv(processed_cwc_file, index=False)
 
-            logger.success(f"[ PROCESS DATA ] Master teams table updated with weights and saved in: {processed_teams_file}")
+            processed_players_file = PROCESSED_DATA_PATH / "processed_players.csv"
+            players_df.to_csv(processed_players_file, index=False)
+
+            processed_appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
+            appearances_df.to_csv(processed_appearances_file, index=False)
+
+            logger.success(
+                f"[ PROCESS DATA ] Master teams table updated with weights and saved in: {processed_teams_file}; "
+                f"\nClub World Cup data saved in: {processed_cwc_file}; "
+                f"\nEnriched players data saved in: {processed_players_file}; "
+                f"\nAppearances data saved in: {processed_appearances_file}"
+            )
         else:
             logger.error("[ PROCESS DATA ] Failed to generate weights. The master teams table was not updated.")
     else:
