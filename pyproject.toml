@@ -5,12 +5,14 @@ description = "A Transformer-based ML model to predict FIFA rankings. It uses a 
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "beautifulsoup4>=4.14.3",
     "keras>=3.14.1",
     "loguru>=0.7.3",
     "pandas>=3.0.3",
     "soccerdata>=1.9.0",
     "torch>=2.12.1",
     "torchvision>=0.27.1",
+    "tqdm>=4.68.3",
 ]
 
 [tool.black]
