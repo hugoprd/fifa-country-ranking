@@ -1,8 +1,8 @@
 # [PT-BR]
 
-# Extração dos Dados
+# Fonte dos Dados
 
-A base de dados utilizada para o projeto foi do FootyStats para as competições globais e do próprio Wikipedia para competições continentais.
+A base de dados utilizada para o projeto foi do FootyStats para as competições globais, do próprio Wikipedia para competições continentais e do Kaggle "Football Data from Transfermarkt" para os jogadores.
 
 ## Competições Continentais
 
@@ -29,11 +29,16 @@ Foi feito um webscrapping em cada página da Wikipedia de cada competição cont
 ### 2. Copa do Mundo
     - https://fbref.com/en/comps/1/
 
+## Jogadores
+
+- Transfermarkt: https://www.kaggle.com/datasets/davidcariboo/player-scores
+
+*( Desta base, foram utilizadas as tabelas `appearances.csv`, `players.csv` e `clubs.csv` )*
+
 # Uso dos dados
 
 O objetivo foi pegar os dados de todas as competições mundiais para ser possível pedir a capacidade de cada liga do planeta.
-*( Infelizmente, a competição do continente África (CAF) não possuía dados disponíveis de fácil acesso, então foi necessário pegar dados de times africanos através do `Mundial de Clubes` )*
 
 # [EN-US]
 
-# Data Extraction
+# Data 
