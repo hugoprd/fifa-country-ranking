@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "keras>=3.14.1",
+    "loguru>=0.7.3",
     "pandas>=3.0.3",
     "soccerdata>=1.9.0",
     "torch>=2.12.1",
