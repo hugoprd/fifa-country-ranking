@@ -50,7 +50,7 @@ source .venv/bin/activate
 .venv\Scripts\activate
 ```
 
-# [US-EN]
+# [EN-US]
 
 ## 🚀 Environment Setup
 

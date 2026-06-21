@@ -250,6 +250,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "keras" },
+    { name = "pandas" },
     { name = "soccerdata" },
     { name = "torch" },
     { name = "torchvision" },
@@ -258,6 +259,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "keras", specifier = ">=3.14.1" },
+    { name = "pandas", specifier = ">=3.0.3" },
     { name = "soccerdata", specifier = ">=1.9.0" },
     { name = "torch", specifier = ">=2.12.1" },
     { name = "torchvision", specifier = ">=0.27.1" },
