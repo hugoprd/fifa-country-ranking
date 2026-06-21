@@ -79,12 +79,12 @@ def _calculate_confederation_weights(club_world_cup_df: pd.DataFrame) -> dict[st
     club_world_cup_df["away_confederation"] = club_world_cup_df["away_team_name"].map(cwc_confederation_map)
 
     points_per_confederation = {
-        "UEFA": {"pontos": 0, "jogos": 0},
-        "CAF": {"pontos": 0, "jogos": 0},
-        "CONMEBOL": {"pontos": 0, "jogos": 0},
-        "CONCACAF": {"pontos": 0, "jogos": 0},
-        "AFC": {"pontos": 0, "jogos": 0},
-        "OFC": {"pontos": 0, "jogos": 0},
+        "UEFA": {"points": 0, "games": 0},
+        "CAF": {"points": 0, "games": 0},
+        "CONMEBOL": {"points": 0, "games": 0},
+        "CONCACAF": {"points": 0, "games": 0},
+        "AFC": {"points": 0, "games": 0},
+        "OFC": {"points": 0, "games": 0},
     }
 
     # run game by game to give the points
@@ -96,33 +96,33 @@ def _calculate_confederation_weights(club_world_cup_df: pd.DataFrame) -> dict[st
 
         # contabilize the games
         if pd.notna(home_conf) and home_conf in points_per_confederation:
-            points_per_confederation[home_conf]["jogos"] += 1
+            points_per_confederation[home_conf]["games"] += 1
         if pd.notna(away_conf) and away_conf in points_per_confederation:
-            points_per_confederation[away_conf]["jogos"] += 1
+            points_per_confederation[away_conf]["games"] += 1
 
         # contabilize the points (3 for win, 1 for draw)
         if home_goals > away_goals:
             if pd.notna(home_conf):
-                points_per_confederation[home_conf]["pontos"] += 3
+                points_per_confederation[home_conf]["points"] += 3
         elif away_goals > home_goals:
             if pd.notna(away_conf):
-                points_per_confederation[away_conf]["pontos"] += 3
+                points_per_confederation[away_conf]["points"] += 3
         else:
             if pd.notna(home_conf):
-                points_per_confederation[home_conf]["pontos"] += 1
+                points_per_confederation[home_conf]["points"] += 1
             if pd.notna(away_conf):
-                points_per_confederation[away_conf]["pontos"] += 1
+                points_per_confederation[away_conf]["points"] += 1
 
     logger.success("[ PROCESS DATA | CALCULATE CONFEDERATION WEIGHTS ] Global Result and Calculated Weights:")
 
     uefa_ppg = 0
-    if points_per_confederation["UEFA"]["jogos"] > 0:
-        uefa_ppg = points_per_confederation["UEFA"]["pontos"] / points_per_confederation["UEFA"]["jogos"]
+    if points_per_confederation["UEFA"]["games"] > 0:
+        uefa_ppg = points_per_confederation["UEFA"]["points"] / points_per_confederation["UEFA"]["games"]
 
     weights = {}
     for conf, stats in points_per_confederation.items():
-        if stats["jogos"] > 0:
-            ppg = stats["pontos"] / stats["jogos"]
+        if stats["games"] > 0:
+            ppg = stats["points"] / stats["games"]
             stats["ppg"] = ppg
 
             # if UEFA is the base 1.0
@@ -130,8 +130,8 @@ def _calculate_confederation_weights(club_world_cup_df: pd.DataFrame) -> dict[st
             weights[conf] = relative_weight
 
             logger.success(
-                f"[ PROCESS DATA | CALCULATE CONFEDERATION WEIGHTS ] {conf:>8} | PPG: {ppg:.2f} ({stats['jogos']} jogos) | "
-                f"Peso Relativo: {relative_weight:.3f}"
+                f"[ PROCESS DATA | CALCULATE CONFEDERATION WEIGHTS ] {conf:>8} | PPG: {ppg:.2f} ({stats['games']} games) | "
+                f"Relative Weight: {relative_weight:.3f}"
             )
 
     return weights
