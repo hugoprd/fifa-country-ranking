@@ -138,7 +138,7 @@ def _calculate_confederation_weights(club_world_cup_df: pd.DataFrame) -> dict[st
     return weights
 
 
-def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame | None]:
     """
     Reads the raw Transfermarkt players data ('appearances.csv' and 'players.csv') and enriches it with the
     confederation weights calculated previously.
@@ -149,10 +149,12 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
     appearances_path = RAW_DATA_PATH / "appearances.csv"
     clubs_path = RAW_DATA_PATH / "clubs.csv"
     competitions_path = RAW_DATA_PATH / "competitions.csv"
+    games_path = RAW_DATA_PATH / "games.csv"
 
-    if not all(p.exists() for p in [players_path, appearances_path, clubs_path, competitions_path]):
+    if not all(p.exists() for p in [players_path, appearances_path, clubs_path, competitions_path, games_path]):
         logger.error(
-            "[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Files of Transfermarkt not found in raw/ (players, appearances, clubs ou competitions)."
+            "[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Files of Transfermarkt not found in raw/ "
+            "(players, appearances, clubs ou competitions)."
         )
         return None, None
 
@@ -160,6 +162,14 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
     df_appearances = pd.read_csv(appearances_path)
     df_clubs = pd.read_csv(clubs_path)
     df_competitions = pd.read_csv(competitions_path)
+    df_games = pd.read_csv(games_path)
+
+    games_cols_to_keep = ["game_id", "home_club_id", "away_club_id", "home_club_goals", "away_club_goals"]
+
+    available_cols = [c for c in games_cols_to_keep if c in df_games.columns]
+    df_games_clean = df_games[available_cols].copy()
+
+    df_games_clean = df_games_clean.dropna(subset=["game_id", "home_club_goals", "away_club_goals"])
 
     valid_weights = df_world_teams.dropna(subset=["confederation", "confederation_weight"])
 
@@ -232,7 +242,7 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
         f"of {len(df_players_enriched)}"
     )
 
-    return df_players_enriched, df_appearances
+    return df_players_enriched, df_appearances, df_games_clean
 
 
 def process_data():
@@ -258,7 +268,7 @@ def process_data():
             # itś filled it with a base value (e.g., 0.1 or 0.0)
             df_world_teams["confederation_weight"] = df_world_teams["confederation_weight"].fillna(0.1)
 
-            players_df, appearances_df = _process_transfermarkt_players(df_world_teams)
+            players_df, appearances_df, games_df = _process_transfermarkt_players(df_world_teams)
 
             processed_teams_file = PROCESSED_DATA_PATH / "processed_world_teams.csv"
             df_world_teams.to_csv(processed_teams_file, index=False)
@@ -272,11 +282,15 @@ def process_data():
             processed_appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
             appearances_df.to_csv(processed_appearances_file, index=False)
 
+            processed_games_file = PROCESSED_DATA_PATH / "processed_games.csv"
+            games_df.to_csv(processed_games_file, index=False)
+
             logger.success(
                 f"[ PROCESS DATA ] Master teams table updated with weights and saved in: {processed_teams_file}; "
                 f"\nClub World Cup data saved in: {processed_cwc_file}; "
                 f"\nEnriched players data saved in: {processed_players_file}; "
-                f"\nAppearances data saved in: {processed_appearances_file}"
+                f"\nAppearances data saved in: {processed_appearances_file}; "
+                f"\nGames data saved in: {processed_games_file}"
             )
         else:
             logger.error("[ PROCESS DATA ] Failed to generate weights. The master teams table was not updated.")
