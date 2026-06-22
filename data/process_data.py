@@ -7,7 +7,6 @@ sys.path.append(str(ROOT_DIR))
 from loguru import logger
 from logs.set_logger import setup_logger
 import pandas as pd
-import difflib
 from tqdm import tqdm
 
 LOG_FILE = ROOT_DIR / "logs"
