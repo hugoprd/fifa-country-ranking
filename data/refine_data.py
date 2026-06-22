@@ -107,10 +107,6 @@ def _calculate_winrate_plus_minus(
     """
     This function is responsible for calculating the win rate and plus-minus for each player based on their
     appearances and the game results.
-
-    The logic is based on the idea that a player's contribution to a match can be measured by whether their team won or lost
-    and not only based on the player's contribution in terms of goals and assists, but also by the overall team performance
-    when they were on the field.
     """
     logger.info("[ REFINE DATA | CALCULATE WINRATE PLUS MINUS ] Calculating results (Win Rate / Plus-Minus) per appearance...")
 
@@ -138,8 +134,21 @@ def _calculate_winrate_plus_minus(
 
     # bring the player's data (Name, Country, Confederation Weight)
     app_enriched = app_games.merge(
-        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight"]], on="player_id", how="inner"
+        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight"]],
+        on="player_id",
+        how="inner",
+        suffixes=("_app", "_player"),  # adding suffixes to avoid column name collision
     )
+
+    # resolves the weight column collision
+    if "confederation_weight_app" in app_enriched.columns and "confederation_weight_player" in app_enriched.columns:
+        # if it's a cup game, uses the cup weight (_app). ff it's NaN (club game), uses the player's base weight (_player).
+        app_enriched["confederation_weight"] = app_enriched["confederation_weight_app"].fillna(
+            app_enriched["confederation_weight_player"]
+        )
+
+        # cleans the dataset by removing the suffixed columns
+        app_enriched = app_enriched.drop(columns=["confederation_weight_app", "confederation_weight_player"])
 
     return app_enriched
 
@@ -184,6 +193,29 @@ def _calculate_individual_efficiency(app_enriched: pd.DataFrame) -> pd.DataFrame
     return ind_matrix
 
 
+def _aggregate_national_team_synergy(synergy_matrix: pd.DataFrame) -> pd.DataFrame:
+    """
+    Groups the pairwise synergy matrix by country to calculate the global
+    synergy score for the National Team (Average and Sum).
+    """
+    logger.info("[ REFINE DATA | AGGREGATE NATIONAL TEAM SYNERGY ] Aggregating synergy by National Team...")
+
+    national_synergy = (
+        synergy_matrix.groupby("national_team")
+        .agg(
+            total_synergy_pairs=("player_id_A", "count"),
+            sum_synergy_score=("total_weighted_wins", "sum"),
+            avg_synergy_score=("total_weighted_wins", "mean"),
+        )
+        .reset_index()
+    )
+
+    # ordering by the avarage (prioritizing the synergy quality)
+    national_synergy = national_synergy.sort_values(by="avg_synergy_score", ascending=False)
+
+    return national_synergy
+
+
 def refine_data():
     """
     Transforms enriched player data into final Machine Learning features:
@@ -194,8 +226,10 @@ def refine_data():
     players_file = PROCESSED_DATA_PATH / "processed_players.csv"
     appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
     games_file = PROCESSED_DATA_PATH / "processed_games.csv"
+    wc_appearances_file = PROCESSED_DATA_PATH / "processed_fbref_world_cup_appearances.csv"
+    wc_games_file = PROCESSED_DATA_PATH / "processed_fbref_world_cup_games.csv"
 
-    if not all(p.exists() for p in [players_file, appearances_file, games_file]):
+    if not all(p.exists() for p in [players_file, appearances_file, games_file, wc_appearances_file, wc_games_file]):
         logger.error("[ REFINE DATA ] Processed files not found! Run process_data.py first.")
 
         return
@@ -203,6 +237,19 @@ def refine_data():
     df_players = pd.read_csv(players_file)
     df_appearances = pd.read_csv(appearances_file)
     df_games = pd.read_csv(games_file)
+
+    if wc_appearances_file.exists() and wc_games_file.exists():
+        df_wc_app = pd.read_csv(wc_appearances_file)
+        df_wc_games = pd.read_csv(wc_games_file)
+
+        # forces the type for concatenation
+        df_wc_app["game_id"] = df_wc_app["game_id"].astype(str)
+        df_wc_games["game_id"] = df_wc_games["game_id"].astype(str)
+
+        # stacks (UNION) the World Cup data under the club data
+        df_appearances = pd.concat([df_appearances, df_wc_app], ignore_index=True)
+        df_games = pd.concat([df_games, df_wc_games], ignore_index=True)
+        logger.info("[ REFINE DATA ] World Cup data successfully merged with Club data!")
 
     # forceing types for merge
     df_appearances["game_id"] = df_appearances["game_id"].astype(str)
@@ -237,6 +284,14 @@ def refine_data():
 
     output_file = REFINED_DATA_PATH / "ml_national_synergy_features.csv"
     synergy_matrix.to_csv(output_file, index=False)
+
+    #### =========================================================
+    # 5. GLOBAL NATIONAL TEAM AGGREGATION (O SEU NOVO CÁLCULO)
+    #### =========================================================
+    national_matrix = _aggregate_national_team_synergy(synergy_matrix)
+
+    out_national_file = REFINED_DATA_PATH / "ml_national_team_ranking.csv"
+    national_matrix.to_csv(out_national_file, index=False)
 
     logger.success(f"[ REFINE DATA ] Sinergy calculated with success. {len(synergy_matrix)} partnerships saved.")
     logger.info(f"[ REFINE DATA ] File saved at: {output_file}")
