@@ -244,6 +244,88 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
     return df_players_enriched, df_appearances, df_games_clean
 
 
+def _world_cup_weight() -> float:
+    """
+    Calculates the dynamic weight for the World Cup based on the average density of elite players in UEFA clubs.
+    """
+    logger.info(
+        "[ PROCESS DATA | WORLD CUP WEIGHT ] Starting calculation of World Cup weight based on UEFA elite player density..."
+    )
+    clubs_path = RAW_DATA_PATH / "clubs.csv"
+    competitions_path = RAW_DATA_PATH / "competitions.csv"
+
+    wc_weight = 2.0  # safety fallback
+
+    if clubs_path.exists() and competitions_path.exists():
+        df_clubs = pd.read_csv(clubs_path)
+        df_comp = pd.read_csv(competitions_path)
+
+        # cross join clubs with competitions to find teams from Europa
+        df_merged = df_clubs.merge(
+            df_comp[["competition_id", "confederation"]],
+            left_on="domestic_competition_id",
+            right_on="competition_id",
+            how="inner",
+        )
+
+        # filters only UEFA (the baseline with weight 1.0)
+        df_uefa = df_merged[df_merged["confederation"].astype(str).str.lower() == "europa"].copy()
+
+        if not df_uefa.empty:
+            df_uefa["squad_size"] = df_uefa["squad_size"].replace(0, 1)
+
+            # Calculates the % of national team players per team in Europe
+            df_uefa["elite_density"] = df_uefa["national_team_players"] / df_uefa["squad_size"]
+            avg_uefa_density = df_uefa["elite_density"].mean()
+
+            # the World Cup has a density of 1.0 (100%).
+            # the final weight is proportional to the difference in density!
+            if avg_uefa_density > 0:
+                wc_weight = 1.0 / avg_uefa_density
+                logger.info(
+                    "[ PROCESS DATA | WORLD CUP WEIGHT ] Average of national team players "
+                    f"in UEFA: {avg_uefa_density*100:.1f}%. "
+                    f"World Cup weight calculated: {wc_weight:.3f}"
+                )
+
+    return wc_weight
+
+
+def _process_fbref_world_cup() -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
+    """
+    Reads the raw FBref World Cup data, performs basic cleaning, and applies
+    the ultimate 'World Cup Weight' to the appearances.
+    """
+    logger.info("[ PROCESS DATA | PROCESS FBREF WORLD CUP ] Starting World Cup data processing...")
+
+    games_path = RAW_DATA_PATH / "fbref_world_cup_games.csv"
+    appearances_path = RAW_DATA_PATH / "fbref_world_cup_appearances.csv"
+
+    if not games_path.exists() or not appearances_path.exists():
+        logger.warning(
+            "[ PROCESS DATA | PROCESS FBREF WORLD CUP ] FBref World Cup files not found in raw/. "
+            "Skipping World Cup enrichment."
+        )
+
+        return None, None
+
+    df_games = pd.read_csv(games_path)
+    df_appearances = pd.read_csv(appearances_path)
+
+    # basic cleaning: removes empty rows (scraping errors or missing data)
+    df_games = df_games.dropna(how="all")
+    df_appearances = df_appearances.dropna(how="all")
+
+    df_appearances["confederation_weight"] = _world_cup_weight()
+
+    logger.success(
+        f"[ PROCESS DATA | PROCESS FBREF WORLD CUP ] World Cup data processed successfully. "
+        f"Games: {len(df_games)} | Appearances: {len(df_appearances)}"
+    )
+
+    return df_games, df_appearances
+
+
 def process_data():
     """
     Processes the downloaded Club World Cup data and external metadata.
@@ -267,30 +349,37 @@ def process_data():
             # itś filled it with a base value (e.g., 0.1 or 0.0)
             df_world_teams["confederation_weight"] = df_world_teams["confederation_weight"].fillna(0.1)
 
+            ### TRANSFERMARKT PROCESS ###
             players_df, appearances_df, games_df = _process_transfermarkt_players(df_world_teams)
 
+            ### FBREF WORLD CUP PROCESS ###
+            wc_games_df, wc_appearances_df = _process_fbref_world_cup()
+
+            ### SAVING ###
             processed_teams_file = PROCESSED_DATA_PATH / "processed_world_teams.csv"
             df_world_teams.to_csv(processed_teams_file, index=False)
 
             processed_cwc_file = PROCESSED_DATA_PATH / "processed_club_world_cup_data.csv"
             club_world_cup_df.to_csv(processed_cwc_file, index=False)
 
-            processed_players_file = PROCESSED_DATA_PATH / "processed_players.csv"
-            players_df.to_csv(processed_players_file, index=False)
+            if players_df is not None:
+                processed_players_file = PROCESSED_DATA_PATH / "processed_players.csv"
+                players_df.to_csv(processed_players_file, index=False)
 
-            processed_appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
-            appearances_df.to_csv(processed_appearances_file, index=False)
+                processed_appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
+                appearances_df.to_csv(processed_appearances_file, index=False)
 
-            processed_games_file = PROCESSED_DATA_PATH / "processed_games.csv"
-            games_df.to_csv(processed_games_file, index=False)
+                processed_games_file = PROCESSED_DATA_PATH / "processed_games.csv"
+                games_df.to_csv(processed_games_file, index=False)
 
-            logger.success(
-                f"[ PROCESS DATA ] Master teams table updated with weights and saved in: {processed_teams_file}; "
-                f"\nClub World Cup data saved in: {processed_cwc_file}; "
-                f"\nEnriched players data saved in: {processed_players_file}; "
-                f"\nAppearances data saved in: {processed_appearances_file}; "
-                f"\nGames data saved in: {processed_games_file}"
-            )
+            if wc_games_df is not None:
+                processed_wc_games_file = PROCESSED_DATA_PATH / "processed_fbref_world_cup_games.csv"
+                wc_games_df.to_csv(processed_wc_games_file, index=False)
+
+                processed_wc_app_file = PROCESSED_DATA_PATH / "processed_fbref_world_cup_appearances.csv"
+                wc_appearances_df.to_csv(processed_wc_app_file, index=False)
+
+            logger.success(f"[ PROCESS DATA ] All datasets successfully updated and saved in '{PROCESSED_DATA_PATH}'.")
         else:
             logger.error("[ PROCESS DATA ] Failed to generate weights. The master teams table was not updated.")
     else:
