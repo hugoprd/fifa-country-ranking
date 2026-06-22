@@ -22,6 +22,128 @@ REFINED_DATA_PATH = ROOT_DIR / "data/refined"
 REFINED_DATA_PATH.mkdir(parents=True, exist_ok=True)
 
 
+def _sinergy_aggregation(df_pairs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregates the synergy points for each patriotic pair across all their shared matches,
+    applying the confederation weight, that returns the synergy_matrix with the following columns:
+    - player_id_A: ID of the first player in the pair.
+    - name_A: Name of the first player.
+    - player_id_B: ID of the second player in the pair.
+    - name_B: Name of the second player.
+    - national_team: The national team (country of citizenship) of the pair.
+    - matches_played_together: The total number of matches the pair played together.
+    - total_synergy_score: The sum of the synergy points for all matches they played together.
+    - total_combined_goals_assists: The total number of goals and assists combined for the pair across all their shared matches.
+    """
+    logger.info("[ REFINE DATA | SINERGY AGGREGATION ] Consolideing metrics of sinergy and strength...")
+
+    # applies the difficult weight on wins and plus-minus to give more importance to players from stronger confederations
+    df_pairs["weighted_win"] = df_pairs["is_win"] * df_pairs["confederation_weight_A"]
+    df_pairs["weighted_plus_minus"] = df_pairs["plus_minus"] * df_pairs["confederation_weight_A"]
+
+    synergy_matrix = (
+        df_pairs.groupby(["player_id_A", "name_A", "player_id_B", "name_B", "country_of_citizenship_A"])
+        .agg(
+            matches_played_together=("game_id", "count"),
+            total_wins=("is_win", "sum"),
+            total_weighted_wins=("weighted_win", "sum"),
+            total_weighted_plus_minus=("weighted_plus_minus", "sum"),
+        )
+        .reset_index()
+    )
+
+    # creation of ML attributes
+    synergy_matrix["win_rate_percentage"] = (synergy_matrix["total_wins"] / synergy_matrix["matches_played_together"]) * 100
+    synergy_matrix = synergy_matrix.rename(columns={"country_of_citizenship_A": "national_team"})
+
+    # relevance filter: only matters if they played together at least 5 times
+    synergy_matrix = synergy_matrix[synergy_matrix["matches_played_together"] >= 5]
+    synergy_matrix = synergy_matrix.sort_values(by="total_weighted_wins", ascending=False)
+
+    return synergy_matrix
+
+
+def _cross_join_sinergy(app_enriched: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cross joins the enriched appearances data to create pairs of players who played together in the same game and club,
+    then calculates the synergy score for patriotic pairs and aggregates it to create the final synergy matrix.
+    """
+    logger.info("[ REFINE DATA | CROSS JOIN SINERGY ] Realizing analysis of networks (Graphs) of patriotic pairs...")
+
+    # filters columns to not explode the RAM
+    cols_to_keep = [
+        "game_id",
+        "player_club_id",
+        "player_id",
+        "name",
+        "country_of_citizenship",
+        "confederation_weight",
+        "is_win",
+        "plus_minus",
+    ]
+
+    app_reduced = app_enriched[cols_to_keep]
+
+    # self-merge: who played with whom on the same team and in the same game?
+    df_pairs = app_reduced.merge(
+        app_reduced, on=["game_id", "player_club_id", "is_win", "plus_minus"], suffixes=("_A", "_B")  # they share the score
+    )
+
+    # optimization filters: only patriotic pairs and without inverse duplication
+    # (A with B is the same as B with A) and self-matches (A with A)
+    df_pairs = df_pairs[df_pairs["player_id_A"] < df_pairs["player_id_B"]]
+    df_pairs = df_pairs[df_pairs["country_of_citizenship_A"] == df_pairs["country_of_citizenship_B"]]
+
+    if df_pairs.empty:
+        logger.warning("[ REFINE DATA | CROSS JOIN SINERGY ] No patriotic pairs found.")
+        return
+
+    return df_pairs
+
+
+def _calculate_winrate_plus_minus(
+    df_players: pd.DataFrame, df_appearances: pd.DataFrame, df_games: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    This function is responsible for calculating the win rate and plus-minus for each player based on their
+    appearances and the game results.
+
+    The logic is based on the idea that a player's contribution to a match can be measured by whether their team won or lost
+    and not only based on the player's contribution in terms of goals and assists, but also by the overall team performance
+    when they were on the field.
+    """
+    logger.info("[ REFINE DATA | CALCULATE WINRATE PLUS MINUS ] Calculating results (Win Rate / Plus-Minus) per appearance...")
+
+    # cross join the appearances with the games
+    app_games = df_appearances.merge(df_games, on="game_id", how="inner")
+
+    # discover if the player was at home or away
+    is_home = app_games["player_club_id"] == app_games["home_club_id"]
+    is_away = app_games["player_club_id"] == app_games["away_club_id"]
+
+    # get the goals for and against based on the player's team position
+    app_games.loc[is_home, "team_goals"] = app_games.loc[is_home, "home_club_goals"]
+    app_games.loc[is_home, "opponent_goals"] = app_games.loc[is_home, "away_club_goals"]
+
+    app_games.loc[is_away, "team_goals"] = app_games.loc[is_away, "away_club_goals"]
+    app_games.loc[is_away, "opponent_goals"] = app_games.loc[is_away, "home_club_goals"]
+
+    # remove any anomalies
+    app_games = app_games.dropna(subset=["team_goals", "opponent_goals"])
+
+    # the mathematics of victory and plus/minus
+    app_games["plus_minus"] = app_games["team_goals"] - app_games["opponent_goals"]
+    app_games["is_win"] = (app_games["plus_minus"] > 0).astype(int)
+    app_games["is_draw"] = (app_games["plus_minus"] == 0).astype(int)
+
+    # bring the player's data (Name, Country, Confederation Weight)
+    app_enriched = app_games.merge(
+        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight"]], on="player_id", how="inner"
+    )
+
+    return app_enriched
+
+
 def refine_data():
     """
     Transforms enriched player data into final Machine Learning features:
@@ -31,77 +153,39 @@ def refine_data():
 
     players_file = PROCESSED_DATA_PATH / "processed_players.csv"
     appearances_file = PROCESSED_DATA_PATH / "processed_appearances.csv"
+    games_file = PROCESSED_DATA_PATH / "processed_games.csv"
 
-    if not players_file.exists() or not appearances_file.exists():
+    if not all(p.exists() for p in [players_file, appearances_file, games_file]):
         logger.error("[ REFINE DATA ] Processed files not found! Run process_data.py first.")
 
         return
 
     df_players = pd.read_csv(players_file)
     df_appearances = pd.read_csv(appearances_file)
+    df_games = pd.read_csv(games_file)
+
+    # forceing types for merge
+    df_appearances["game_id"] = df_appearances["game_id"].astype(str)
+    df_games["game_id"] = df_games["game_id"].astype(str)
+    df_appearances["player_club_id"] = df_appearances["player_club_id"].astype(str).str.split(".").str[0]
+    df_games["home_club_id"] = df_games["home_club_id"].astype(str).str.split(".").str[0]
+    df_games["away_club_id"] = df_games["away_club_id"].astype(str).str.split(".").str[0]
 
     #### =========================================================
-    # 1. PREPARING THE SYNERGY MATRIX
+    # 1. ENRICHEING THE GAME WITH VICTORY AND PLUS/MINUS
     #### =========================================================
-    logger.info("[ REFINE DATA ] Calculating National Synergy Matrix...")
+    app_enriched = _calculate_winrate_plus_minus(df_players, df_appearances, df_games)
 
-    # reduceing the appearances to the minimum necessary to save RAM
-    app_reduced = df_appearances[["game_id", "player_id", "player_club_id", "goals", "assists"]].copy()
-
-    # get the nationality and confederation weight for each player before merging
-    app_enriched = app_reduced.merge(
-        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight"]], on="player_id", how="inner"
-    )
+    # =========================================================
+    # 2. THE SINERGY CROSS JOIN (THE SYNERGY JOIN A AND B)
+    # =========================================================
+    df_pairs = _cross_join_sinergy(app_enriched)
 
     #### =========================================================
-    # 2. THE CROSS JOIN (SELF-MERGE)
+    # 3. FINAL AGGREGATION (TEAM SINERGY)
     #### =========================================================
-    # pandas cross join the table with it self: "who played with who, at the same club, at the same game?"
-    df_pairs = app_enriched.merge(app_enriched, on=["game_id", "player_club_id"], suffixes=("_A", "_B"))
+    synergy_matrix = _sinergy_aggregation(df_pairs)
 
-    # critical Filter 1: remove duplicates (A with B is the same as B with A) and self-matches (A with A)
-    df_pairs = df_pairs[df_pairs["player_id_A"] < df_pairs["player_id_B"]]
-
-    # critical filter 2: the selection magic
-    # just matters duples of the same nationality. this reduces the table size by about 90%
-    df_pairs = df_pairs[df_pairs["country_of_citizenship_A"] == df_pairs["country_of_citizenship_B"]]
-
-    if df_pairs.empty:
-        logger.warning("[ REFINE DATA ] Nenhuma dupla de compatriotas encontrada.")
-        return
-
-    #### =========================================================
-    # 3. SINERGY STRENGTH CALCULATION
-    #### =========================================================
-    # the sinergy is the sum of the goals participated in by the pair in the match, multiplied by the confederation weight
-    # (since they play at the same club, the confederation_weight_A is equal to B)
-    df_pairs["combined_output"] = df_pairs["goals_A"] + df_pairs["goals_B"] + df_pairs["assists_A"] + df_pairs["assists_B"]
-    df_pairs["synergy_points"] = df_pairs["combined_output"] * df_pairs["confederation_weight_A"]
-
-    # groups all the history of that pair
-    synergy_matrix = (
-        df_pairs.groupby(["player_id_A", "name_A", "player_id_B", "name_B", "country_of_citizenship_A"])
-        .agg(
-            matches_played_together=("game_id", "count"),
-            total_synergy_score=("synergy_points", "sum"),
-            total_combined_goals_assists=("combined_output", "sum"),
-        )
-        .reset_index()
-    )
-
-    # renames columns for better readability
-    synergy_matrix = synergy_matrix.rename(columns={"country_of_citizenship_A": "national_team"})
-
-    # critical Filter 3: relevancy
-    # just mantein pairs that player together at least 5 times to the ML model don't learn with 'noise'
-    synergy_matrix = synergy_matrix[synergy_matrix["matches_played_together"] >= 5]
-
-    # order to see the better pairs first
-    synergy_matrix = synergy_matrix.sort_values(by="total_synergy_score", ascending=False)
-
-    #### =========================================================
-    # 4. SAVING
-    #### =========================================================
     output_file = REFINED_DATA_PATH / "ml_national_synergy_features.csv"
     synergy_matrix.to_csv(output_file, index=False)
 
