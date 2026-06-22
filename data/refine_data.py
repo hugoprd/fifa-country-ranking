@@ -144,6 +144,46 @@ def _calculate_winrate_plus_minus(
     return app_enriched
 
 
+def _calculate_individual_efficiency(app_enriched: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates the individual efficiency of each player based on universal metrics
+    (Win Rate and Plus/Minus), weighted by the difficulty of their confederation.
+    """
+    logger.info("[ REFINE DATA | CALCULATE INDIVIDUAL EFFICIENCY ] Calculating individual efficiency weighted...")
+
+    # applies the confederation weight at each game individually
+    app_enriched["weighted_win"] = app_enriched["is_win"] * app_enriched["confederation_weight"]
+    app_enriched["weighted_plus_minus"] = app_enriched["plus_minus"] * app_enriched["confederation_weight"]
+
+    # group by player
+    ind_matrix = (
+        app_enriched.groupby(["player_id", "name", "country_of_citizenship", "confederation_weight"])
+        .agg(
+            total_matches=("game_id", "count"),
+            total_wins=("is_win", "sum"),
+            total_weighted_wins=("weighted_win", "sum"),
+            raw_plus_minus=("plus_minus", "sum"),
+            total_weighted_plus_minus=("weighted_plus_minus", "sum"),
+        )
+        .reset_index()
+    )
+
+    # creation of final metrics
+    ind_matrix["win_rate_percentage"] = (ind_matrix["total_wins"] / ind_matrix["total_matches"]) * 100
+
+    # renames columns to standardize with the synergy table
+    ind_matrix = ind_matrix.rename(columns={"country_of_citizenship": "national_team"})
+
+    # relevance filter: remove players with very few games (noise)
+    # e.g., a player enters for 1 minute and their team wins, they would have 100% win rate.
+    ind_matrix = ind_matrix[ind_matrix["total_matches"] >= 10]
+
+    # sort by the best in the world according to their mathematics
+    ind_matrix = ind_matrix.sort_values(by="total_weighted_wins", ascending=False)
+
+    return ind_matrix
+
+
 def refine_data():
     """
     Transforms enriched player data into final Machine Learning features:
@@ -176,20 +216,29 @@ def refine_data():
     #### =========================================================
     app_enriched = _calculate_winrate_plus_minus(df_players, df_appearances, df_games)
 
-    # =========================================================
-    # 2. THE SINERGY CROSS JOIN (THE SYNERGY JOIN A AND B)
-    # =========================================================
+    #### =========================================================
+    # 2. INDIVIDUAL EFFICIENCY
+    #### =========================================================
+    df_individual = _calculate_individual_efficiency(app_enriched)
+
+    out_individual_file = REFINED_DATA_PATH / "ml_individual_features.csv"
+    df_individual.to_csv(out_individual_file, index=False)
+    logger.success(f"[ REFINE DATA ] Individual efficiency saved at: {out_individual_file}")
+
+    #### =========================================================
+    # 3. THE SINERGY CROSS JOIN (THE SYNERGY JOIN A AND B)
+    #### =========================================================
     df_pairs = _cross_join_sinergy(app_enriched)
 
     #### =========================================================
-    # 3. FINAL AGGREGATION (TEAM SINERGY)
+    # 4. FINAL AGGREGATION (TEAM SINERGY)
     #### =========================================================
     synergy_matrix = _sinergy_aggregation(df_pairs)
 
     output_file = REFINED_DATA_PATH / "ml_national_synergy_features.csv"
     synergy_matrix.to_csv(output_file, index=False)
 
-    logger.success(f"[ REFINE DATA ] Sinergy calculated with success! {len(synergy_matrix)} partnerships saved.")
+    logger.success(f"[ REFINE DATA ] Sinergy calculated with success. {len(synergy_matrix)} partnerships saved.")
     logger.info(f"[ REFINE DATA ] File saved at: {output_file}")
 
 
