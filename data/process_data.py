@@ -148,67 +148,73 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
     players_path = RAW_DATA_PATH / "players.csv"
     appearances_path = RAW_DATA_PATH / "appearances.csv"
     clubs_path = RAW_DATA_PATH / "clubs.csv"
+    competitions_path = RAW_DATA_PATH / "competitions.csv"
 
-    if not all(p.exists() for p in [players_path, appearances_path, clubs_path]):
+    if not all(p.exists() for p in [players_path, appearances_path, clubs_path, competitions_path]):
         logger.error(
-            "[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Files of Transfermarkt not found in raw/ (players, appearances ou clubs)."
+            "[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Files of Transfermarkt not found in raw/ (players, appearances, clubs ou competitions)."
         )
-
         return None, None
 
     df_players = pd.read_csv(players_path)
     df_appearances = pd.read_csv(appearances_path)
     df_clubs = pd.read_csv(clubs_path)
+    df_competitions = pd.read_csv(competitions_path)
 
-    # assuming that the team column in the Kaggle file is named 'current_club_id'
+    valid_weights = df_world_teams.dropna(subset=["confederation", "confederation_weight"])
 
-    column_club_name = "current_club_name"
+    clean_keys = valid_weights["confederation"].astype(str).str.strip().str.upper()
+    weight_values = valid_weights["confederation_weight"].astype(float)
 
-    if column_club_name not in df_players.columns:
-        logger.error(
-            f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] The column '{column_club_name}' does not exist in players.csv!"
-        )
-        logger.error(f"Available columns: {list(df_players.columns)}")
+    weight_dict = dict(zip(clean_keys, weight_values))
 
-        return
+    logger.info(f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] DEBUG: Weight Dictionary Loaded: {weight_dict}")
 
-    teams_wiki_list = df_world_teams["team_name"].dropna().tolist()
+    df_clubs["domestic_competition_id"] = df_clubs["domestic_competition_id"].astype(str).str.strip()
+    df_competitions["competition_id"] = df_competitions["competition_id"].astype(str).str.strip()
 
-    def _find_team(tm_name: str) -> str | None:
-        """
-        Returns the best match for a team name from Transfermarkt in the list of team names from Wikipedia.
-        It first tries a direct substring match, and if that fails, it uses fuzzy matching to find the closest name.
-        """
-        tm_name_str = str(tm_name).lower()
-
-        # strategy A: the name of the Wiki is contained in the full name of Transfermarkt?
-        # eg.: find "Flamengo" within "Clube de Regatas do Flamengo"
-        for wiki_name in teams_wiki_list:
-            if str(wiki_name).lower() in tm_name_str:
-                return wiki_name
-
-        # strategy B: If not found, use text similarity (Fuzzy)
-        matches = difflib.get_close_matches(tm_name_str, [str(w).lower() for w in teams_wiki_list], n=1, cutoff=0.85)
-        if matches:
-            # returns the original name from Wikipedia that matched
-            for wiki_name in teams_wiki_list:
-                if str(wiki_name).lower() == matches[0]:
-                    return wiki_name
-
-        return None
-
-    df_clubs["matched_wiki_name"] = df_clubs["name"].apply(_find_team)
-
-    # now that Transfermarkt knows who he is in Wikipedia, the tables are merged
-    # to bring the confederation and weight information to the players table through the club_id
-    df_clubs = df_clubs.merge(
-        df_world_teams[["team_name", "confederation", "confederation_weight"]],
-        left_on="matched_wiki_name",
-        right_on="team_name",
+    df_clubs_comp = df_clubs.merge(
+        df_competitions[["competition_id", "confederation"]],
+        left_on="domestic_competition_id",
+        right_on="competition_id",
         how="left",
     )
 
-    df_bridge = df_clubs[["club_id", "confederation_weight"]].dropna()
+    unique_confed_kaggle = df_clubs_comp["confederation"].dropna().unique()
+    logger.info(
+        f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] DEBUG: Confederations found in Kaggle: {unique_confed_kaggle}"
+    )
+
+    transfermarkt_confed_map = {
+        # terms in english (commonly used)
+        "europa": "UEFA",
+        "south-america": "CONMEBOL",
+        "south america": "CONMEBOL",
+        "africa": "CAF",
+        "asia": "AFC",
+        "north-america": "CONCACAF",
+        "north america": "CONCACAF",
+        "oceania": "OFC",
+        # terms in german (the database downloaded came in german)
+        "amerika": "CONMEBOL",
+        "asien": "AFC",
+        "afrika": "CAF",
+        "ozeanien": "OFC",
+        "nordamerika": "CONCACAF",
+        "südamerika": "CONMEBOL",
+    }
+
+    df_clubs_comp["clean_confed"] = df_clubs_comp["confederation"].astype(str).str.lower().str.strip()
+    df_clubs_comp["mapped_confederation"] = df_clubs_comp["clean_confed"].map(transfermarkt_confed_map)
+
+    df_clubs_comp["confederation_weight"] = df_clubs_comp["mapped_confederation"].map(weight_dict)
+
+    df_bridge = df_clubs_comp[["club_id", "confederation_weight"]].dropna()
+
+    logger.info(f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] DEBUG: Total clubs that received weight: {len(df_bridge)}")
+
+    df_players["current_club_id"] = df_players["current_club_id"].astype(str).str.strip()
+    df_bridge["club_id"] = df_bridge["club_id"].astype(str).str.strip()
 
     df_players_enriched = df_players.merge(df_bridge, left_on="current_club_id", right_on="club_id", how="left")
 
@@ -218,12 +224,12 @@ def _process_transfermarkt_players(df_world_teams: pd.DataFrame) -> tuple[pd.Dat
     if "club_id" in df_players_enriched.columns:
         df_players_enriched = df_players_enriched.drop(columns=["club_id"])
 
-    # appearances receives a basic cleanup to prevent the ML model from crashing
     df_appearances = df_appearances.dropna(subset=["player_id", "game_id"])
 
-    logger.success(
-        f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] Enrichment completed. Total players: {len(df_players_enriched)} ;"
-        f"Total appearances: {len(df_appearances)}"
+    qtd_01 = (df_players_enriched["confederation_weight"] == 0.1).sum()
+    logger.info(
+        f"[ PROCESS DATA | PROCESS TRANSFERMARKT PLAYERS ] DEBUG: Players with fallback weight (0.1): {qtd_01} "
+        f"of {len(df_players_enriched)}"
     )
 
     return df_players_enriched, df_appearances
