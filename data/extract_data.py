@@ -12,6 +12,7 @@ import requests
 import soccerdata as sd
 from tqdm import tqdm
 import time
+import shutil
 
 LOG_FILE = ROOT_DIR / "logs"
 LOG_NAME = "data_log"
@@ -26,41 +27,22 @@ EXTERNAL_METADATA_PATH = ROOT_DIR / "data/external_metadata"
 EXTERNAL_METADATA_PATH.mkdir(parents=True, exist_ok=True)
 
 
-def _extract_world_cup_data_fbref():
+def _cleanup_temp_files():
     """
-    Extracts Club World Cup match data from FBref.com for the specified seasons.
-    Saves each season's data as a separate CSV file in the raw data directory.
+    Removes folder 'downloaded_files' created automatically by soccerdata/FBref,
+    keeping the project root clean.
     """
-    logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Starting extraction of World Cup data from FBref...")
+    logger.info(
+        "[ EXTRACT DATA | CLEANUP TEMP FILES ] Removing temporary folder 'downloaded_files' created by soccerdata/FBref..."
+    )
+    temp_dir = ROOT_DIR / "downloaded_files"
 
-    try:
-        # in soccerdata, the World Cup is mapped to the league 'INT-World Cup'
-        fbref = sd.FBref(leagues="INT-World Cup", seasons=["2018", "2022"])
-
-        logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Downloading games history...")
-        df_games = fbref.read_schedule()
-
-        games_file = RAW_DATA_PATH / "fbref_world_cup_games.csv"
-        games_file.parent.mkdir(parents=True, exist_ok=True)
-        df_games.to_csv(games_file)
-        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Games saved to: {games_file}")
-
-        time.sleep(3)
-
-        # FBref limits 20 requisitions per minute
-        # soccerdata pauses by itself if it reaches the limit
-        logger.info(
-            "[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Downloading player statistics by match. "
-            "This may take a few minutes..."
-        )
-        df_players = fbref.read_player_match_stats(stat_type="summary")
-
-        players_file = RAW_DATA_PATH / "fbref_world_cup_appearances.csv"
-        players_file.parent.mkdir(parents=True, exist_ok=True)
-        df_players.to_csv(players_file)
-        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Appearances saved to: {players_file}")
-    except Exception as e:
-        logger.error(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Failed to extract data from FBref: {e}")
+    if temp_dir.exists() and temp_dir.is_dir():
+        try:
+            shutil.rmtree(temp_dir)
+            logger.info("[ EXTRACT DATA | CLEANUP TEMP FILES ] Temporary folder 'downloaded_files' removed successfully.")
+        except Exception as e:
+            logger.warning(f"[ EXTRACT DATA | CLEANUP TEMP FILES ] Could not remove temporary folder: {e}")
 
 
 def _download_club_world_cup_data(urls: dict[str, str]):
@@ -88,6 +70,43 @@ def _download_club_world_cup_data(urls: dict[str, str]):
             )
 
 
+def _extract_world_cup_data():
+    """
+    Extracts Club World Cup match data from FBref.com for the specified seasons.
+    Saves each season's data as a separate CSV file in the raw data directory.
+    """
+    logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Starting extraction of World Cup data from FBref...")
+
+    try:
+        # in soccerdata, the World Cup is mapped to the league 'INT-World Cup'
+        fbref = sd.FBref(leagues="INT-World Cup", seasons=["2018", "2022"])
+
+        logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Downloading games history...")
+        df_games = fbref.read_schedule()
+
+        games_file = RAW_DATA_PATH / "fbref_world_cup_games.csv"
+        games_file.parent.mkdir(parents=True, exist_ok=True)
+        df_games.to_csv(games_file)
+        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Games saved to: {games_file}")
+
+        time.sleep(3)
+
+        # FBref limits 20 requisitions per minute
+        # soccerdata pauses by itself if it reaches the limit
+        logger.info(
+            "[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Downloading player statistics by match. "
+            "This may take a few minutes..."
+        )
+        df_players = fbref.read_player_match_stats(stat_type="summary")
+
+        players_file = RAW_DATA_PATH / "fbref_world_cup_appearances.csv"
+        players_file.parent.mkdir(parents=True, exist_ok=True)
+        df_players.to_csv(players_file)
+        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Appearances saved to: {players_file}")
+    except Exception as e:
+        logger.error(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA ] Failed to extract data from FBref: {e}")
+
+
 def extract_data():
     """
     Extracts raw data for FIFA country rankings and related football metadata.
@@ -107,7 +126,9 @@ def extract_data():
 
     _download_club_world_cup_data(CLUB_WORLD_CUP_URLS)
 
-    _extract_world_cup_data_fbref()
+    _extract_world_cup_data()
+
+    _cleanup_temp_files()
 
 
 if __name__ == "__main__":
