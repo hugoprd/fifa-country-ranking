@@ -22,7 +22,15 @@ A Transformer-based ML model to predict FIFA rankings. It uses a bottom-up appro
 
 # [PT-BR]
 
-## Configuração do Ambiente (Setup)
+# Dados
+
+Os dados utilizados neste projeto provêm de múltiplas fontes, incluindo FootyStats (Mundial de Clubes), Wikipedia (competições continentais) e Kaggle/Transfermarkt (estatísticas de jogadores e partidas). 
+
+O pipeline de dados é estruturado em uma Arquitetura Medalhão (Bronze, Prata e Ouro), focado em processar estatísticas brutas para quantificar a eficiência individual e a sinergia entre compatriotas, sempre ponderando pela dificuldade (peso) da liga em que atuam.
+
+Para ver os detalhes completos sobre a origem dos dados, a engenharia de atributos (Feature Engineering) e como rodar o pipeline automatizado de extração e refinamento, **[clique aqui para ler a documentação completa dos Dados (Pasta `data/`)](./data/README.md)**.
+
+# Configuração do Ambiente (Setup)
 
 Este projeto utiliza o [uv](https://github.com/astral-sh/uv) como gerenciador de pacotes e ambientes virtuais, garantindo uma instalação rápida e isolada.
 
@@ -69,19 +77,19 @@ source .venv/bin/activate
 .venv\Scripts\activate
 ```
 
-# Dados
-
-Os dados utilizados neste projeto provêm de múltiplas fontes, incluindo FootyStats (Mundial de Clubes), Wikipedia (competições continentais) e Kaggle/Transfermarkt (estatísticas de jogadores e partidas). 
-
-O pipeline de dados é estruturado em uma Arquitetura Medalhão (Bronze, Prata e Ouro), focado em processar estatísticas brutas para quantificar a eficiência individual e a sinergia entre compatriotas, sempre ponderando pela dificuldade (peso) da liga em que atuam.
-
-Para ver os detalhes completos sobre a origem dos dados, a engenharia de atributos (Feature Engineering) e como rodar o pipeline automatizado de extração e refinamento, **[clique aqui para ler a documentação completa dos Dados (Pasta `data/`)](./data/README.md)**.
-
 ----------------------------------------------------------------------
 
 # [EN-US]
 
-## Environment Setup
+# Data
+
+The data used in this project comes from multiple sources, including FootyStats (Club World Cup), Wikipedia (continental competitions), and Kaggle/Transfermarkt (player and match statistics).
+
+The data pipeline is structured using a Medallion Architecture (Bronze, Silver, and Gold), focused on processing raw statistics to quantify individual efficiency and synergy among compatriots, always weighted by the difficulty (weight) of the league they play in.
+
+For full details on the origin of the data, the Feature Engineering process, and how to run the automated extraction and refinement pipeline, **[click here to read the complete Data documentation (`data/` folder)](./data/README.md)**.
+
+# Environment Setup
 
 This project uses [uv](https://github.com/astral-sh/uv) as its package and virtual environment manager, ensuring an extremely fast and isolated installation.
 
@@ -128,11 +136,3 @@ source .venv/bin/activate
 ```bash
 .venv\Scripts\activate
 ```
-
-# Data
-
-The data used in this project comes from multiple sources, including FootyStats (Club World Cup), Wikipedia (continental competitions), and Kaggle/Transfermarkt (player and match statistics).
-
-The data pipeline is structured using a Medallion Architecture (Bronze, Silver, and Gold), focused on processing raw statistics to quantify individual efficiency and synergy among compatriots, always weighted by the difficulty (weight) of the league they play in.
-
-For full details on the origin of the data, the Feature Engineering process, and how to run the automated extraction and refinement pipeline, **[click here to read the complete Data documentation (`data/` folder)](./data/README.md)**.
