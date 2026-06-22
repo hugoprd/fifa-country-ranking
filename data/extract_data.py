@@ -9,7 +9,9 @@ from logs.set_logger import setup_logger
 import pandas as pd
 import io
 import requests
+import soccerdata as sd
 from tqdm import tqdm
+import time
 
 LOG_FILE = ROOT_DIR / "logs"
 LOG_NAME = "data_log"
@@ -22,6 +24,43 @@ RAW_DATA_PATH = ROOT_DIR / "data/raw"
 RAW_DATA_PATH.mkdir(parents=True, exist_ok=True)
 EXTERNAL_METADATA_PATH = ROOT_DIR / "data/external_metadata"
 EXTERNAL_METADATA_PATH.mkdir(parents=True, exist_ok=True)
+
+
+def _extract_world_cup_data_fbref():
+    """
+    Extracts Club World Cup match data from FBref.com for the specified seasons.
+    Saves each season's data as a separate CSV file in the raw data directory.
+    """
+    logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Starting extraction of World Cup data from FBref...")
+
+    try:
+        # in soccerdata, the World Cup is mapped to the league 'INT-World Cup'
+        fbref = sd.FBref(leagues="INT-World Cup", seasons=["2018", "2022"])
+
+        logger.info("[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Downloading games history...")
+        df_games = fbref.read_schedule()
+
+        games_file = RAW_DATA_PATH / "fbref_world_cup_games.csv"
+        games_file.parent.mkdir(parents=True, exist_ok=True)
+        df_games.to_csv(games_file)
+        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Games saved to: {games_file}")
+
+        time.sleep(3)
+
+        # FBref limits 20 requisitions per minute
+        # soccerdata pauses by itself if it reaches the limit
+        logger.info(
+            "[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Downloading player statistics by match. "
+            "This may take a few minutes..."
+        )
+        df_players = fbref.read_player_match_stats(stat_type="summary")
+
+        players_file = RAW_DATA_PATH / "fbref_world_cup_appearances.csv"
+        players_file.parent.mkdir(parents=True, exist_ok=True)
+        df_players.to_csv(players_file)
+        logger.success(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Appearances saved to: {players_file}")
+    except Exception as e:
+        logger.error(f"[ EXTRACT DATA | EXTRACT WORLD CUP DATA FBREF ] Failed to extract data from FBref: {e}")
 
 
 def _download_club_world_cup_data(urls: dict[str, str]):
@@ -67,6 +106,8 @@ def extract_data():
     }
 
     _download_club_world_cup_data(CLUB_WORLD_CUP_URLS)
+
+    _extract_world_cup_data_fbref()
 
 
 if __name__ == "__main__":
