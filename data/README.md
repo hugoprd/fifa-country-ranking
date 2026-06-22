@@ -33,7 +33,7 @@ Foi feito um webscrapping em cada página da Wikipedia de cada competição cont
 
 - Transfermarkt: https://www.kaggle.com/datasets/davidcariboo/player-scores
 
-*( Desta base, foram utilizadas as tabelas `appearances.csv`, `players.csv`, `clubs.csv` e `competitions.csv` )*
+*( Desta base, foram utilizadas as tabelas `appearances.csv`, `players.csv`, `clubs.csv`, `competitions.csv` e `games.csv` )*
 
 # Uso dos dados
 
