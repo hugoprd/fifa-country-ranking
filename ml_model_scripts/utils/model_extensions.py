@@ -52,18 +52,25 @@ class FIFANationalTeamDataset(Dataset):
     """
 
     def __init__(self, individual_path, pairs_path, ranking_path, top_k_players=11):
-        ### LOAD DATA ###
         self.df_ind = pd.read_csv(individual_path)
         self.df_pairs = pd.read_csv(pairs_path)
         self.df_target = pd.read_csv(ranking_path)
 
         self.top_k = top_k_players
-
-        # the model will receive these attributes of the player (can adjust if added more columns)
         self.feature_cols = ["total_matches", "total_weighted_wins", "total_weighted_plus_minus", "win_rate_percentage"]
+
+        # global synergy normalization
+        global_std = self.df_pairs["total_weighted_wins"].std()
+        self.synergy_std = float(global_std) if global_std > 0 else 1.0
 
         # build the list of available countries
         all_target_countries = self.df_target["national_team"].unique()
+
+        # global normalization of the individual features
+        feat_df = self.df_ind[self.feature_cols]
+        self.feat_mean = feat_df.mean().values.astype("float32")  # shape (4,)
+        self.feat_std = feat_df.std().values.astype("float32")
+        self.feat_std[self.feat_std == 0] = 1.0
 
         # a country with ZERO rows in df_ind would get a 100%-padding mask, i.e. an
         # attention row that is -inf in every column. softmax of an all -inf row is
@@ -119,8 +126,8 @@ class FIFANationalTeamDataset(Dataset):
         player_id_to_idx = {}
 
         for i, (_, row) in enumerate(top_players.iterrows()):
-            player_tensor[i] = torch.tensor([row[col] for col in self.feature_cols], dtype=torch.float32)
-            player_id_to_idx[row["player_id"]] = i
+            raw = torch.tensor([row[col] for col in self.feature_cols], dtype=torch.float32)
+            player_tensor[i] = (raw - torch.tensor(self.feat_mean)) / torch.tensor(self.feat_std)
 
         #### ==========================================
         # 2. BUILDING THE SYNERGY MATRIX (ATTENTION)
@@ -141,7 +148,7 @@ class FIFANationalTeamDataset(Dataset):
 
                 # add a little value to normalize/scale the synergy points
                 # (so the model doesn't get too crazy with high values)
-                score = row["total_weighted_wins"] / 10.0
+                score = row["total_weighted_wins"] / (self.synergy_std + 1e-6)
 
                 # fills the symmetric matrix 11x11
                 synergy_tensor[idx_a, idx_b] = score

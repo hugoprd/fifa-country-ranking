@@ -246,6 +246,7 @@ def train_model():
 
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(actual_model.parameters(), lr=0.001)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
         actual_model.train()
 
@@ -257,11 +258,12 @@ def train_model():
                 predictions = actual_model(players, synergy_mask, key_padding_mask=padding_mask)
                 loss = criterion(predictions, targets)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(actual_model.parameters(), max_norm=1.0)
                 optimizer.step()
-
                 epoch_loss += loss.item()
 
             avg_loss = epoch_loss / len(dataloader)
+            scheduler.step()
 
         logger.info(f"[ TRAIN MODEL ] Hyperparameter Test Session {epoch+1}/{epochs} Completed. Final Loss: {avg_loss:.4f}")
 
@@ -299,8 +301,6 @@ def train_model():
 
     logger.info("[ TRAIN MODEL ] Starting final model train with the best configuration...")
 
-    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001)
-
     final_epochs = 300
     final_model.train()
 
@@ -308,21 +308,23 @@ def train_model():
     best_final_weights = None
     best_epoch = 0
 
+    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001)
+    final_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(final_optimizer, T_max=final_epochs)
+
     for epoch in tqdm.tqdm(range(final_epochs), desc="Final Train Epochs", unit="epoch", colour="white"):
         epoch_loss = 0.0
 
         for players, synergy_mask, padding_mask, targets in dataloader:
             final_optimizer.zero_grad()
-
-            predictions = final_model(players, synergy_mask, key_padding_mask=padding_mask)
-
+            predictions = actual_model(players, synergy_mask, key_padding_mask=padding_mask)
             loss = criterion(predictions, targets)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(final_model.parameters(), max_norm=1.0)
             final_optimizer.step()
-
             epoch_loss += loss.item()
 
         avg_loss = epoch_loss / len(dataloader)
+        final_scheduler.step()
 
         if avg_loss < best_final_loss:
             best_final_loss = avg_loss
