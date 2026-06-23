@@ -17,8 +17,8 @@
 
 </div>
 
-- [PT-BR](##pt-br)
-- [EN-US](##en-us)
+- [PT-BR](#pt-br)
+- [EN-US](#en-us)
 
 ---
 
