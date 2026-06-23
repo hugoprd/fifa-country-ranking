@@ -1,5 +1,7 @@
 # fifa-country-ranking
-A Transformer-based ML model to predict FIFA rankings. It uses a bottom-up approach, weighting player attributes based on league difficulty derived from continental tournament data.
+
+> A Transformer-based ML model to predict FIFA rankings. It uses a bottom-up approach, weighting player attributes based on league difficulty derived from continental tournament data.
+
 
 <div align="center">
 
@@ -15,124 +17,227 @@ A Transformer-based ML model to predict FIFA rankings. It uses a bottom-up appro
 
 </div>
 
-- [PT-BR](#pt-br)
-- [EN-US](#en-us)
+- [PT-BR](##pt-br)
+- [EN-US](##en-us)
 
-----------------------------------------------------------------------
+---
 
-# [PT-BR]
+## PT-BR
 
-# Dados
+### O Problema: Medindo a Sinergia
 
-Os dados utilizados neste projeto provêm de múltiplas fontes, incluindo FootyStats (Mundial de Clubes), Wikipedia (competições continentais) e Kaggle/Transfermarkt (estatísticas de jogadores e partidas). 
+O Ranking oficial da FIFA avalia as seleções nacionais com base em um cálculo simples de vitórias, empates e derrotas. No entanto, o futebol moderno é complexo. Uma seleção com 11 superestrelas que nunca jogaram juntas muitas vezes perde para uma equipe menos badalada, mas altamente entrosada.
 
-O pipeline de dados é estruturado em uma Arquitetura Medalhão (Bronze, Prata e Ouro), focado em processar estatísticas brutas para quantificar a eficiência individual e a sinergia entre compatriotas, sempre ponderando pela dificuldade (peso) da liga em que atuam.
+O objetivo deste projeto é responder a uma pergunta fundamental:
 
-Para ver os detalhes completos sobre a origem dos dados, a engenharia de atributos (Feature Engineering) e como rodar o pipeline automatizado de extração e refinamento, **[clique aqui para ler a documentação completa dos Dados (Pasta `data/`)](./data/README.md)**.
+> "Podemos prever a força real de uma seleção nacional medindo exclusivamente a qualidade individual de seus jogadores e a sinergia (entrosamento) entre eles nos clubes?"
 
-# Configuração do Ambiente (Setup)
+---
 
-Este projeto utiliza o [uv](https://github.com/astral-sh/uv) como gerenciador de pacotes e ambientes virtuais, garantindo uma instalação rápida e isolada.
+### Os Dados e Limitações
 
-Siga o passo a passo abaixo para configurar o projeto na sua máquina:
+A construção desse pipeline exigiu a coleta de dados de diversas fontes (FootyStats, Wikipedia, Transfermarkt e FBref). O pipeline consolida essas informações em três bases principais refinadas:
 
-### 1. Instalação do `uv`
-Se o `uv` ainda não está instalado, abra o seu terminal e execute o comando correspondente ao seu sistema operacional:
+- `ml_individual_features.csv`: Estatísticas de eficiência de cada jogador.
+- `ml_national_synergy_features.csv`: O mapeamento de quem joga (ou já jogou) com quem no mesmo clube.
+- `ml_national_team_ranking.csv`: O alvo (target) para o treinamento do modelo.
+
+> ⚠️ **Limitações Encontradas:**
+>
+> Durante a engenharia de dados, esbarramos em algumas restrições do mundo real:
+>
+> - **Janela de Tempo Escassa:** Foi possível a coleta de dados confiáveis e granulares apenas do período entre 2018 e 2025.
+> - **Pesos das Confederações:** Foi matematicamente difícil estabelecer um "peso" perfeito para comparar a dificuldade entre ligas da UEFA (Europa) e CONMEBOL (América do Sul) com as demais confederações, devido à falta de confrontos diretos frequentes entre clubes de continentes diferentes fora do Mundial de Clubes.
+
+---
+
+### Inteligência Artificial: Por que Transformers?
+
+Para resolver o problema da sinergia, foi escolhido a arquitetura **Transformer**, mas aplicada a esportes.
+
+Em vez de processar "palavras em uma frase", nosso modelo processa **"jogadores em um elenco"**.
+
+Foi transformado os dados de sinergia dos jogadores em **Grafos (Matrizes de Adjacência)**. Quando o Transformer usa seu mecanismo de **Self-Attention (Atenção)**, ele olha para essa matriz e entende automaticamente quais jogadores possuem "conexões" prévias em clubes. Assim, o modelo aprende a dar mais peso para pequenos grupos entrosados (ex: um trio de meio-campo que joga no mesmo time há 3 anos).
+
+---
+
+### Resultados: Modelo vs FIFA Oficial
+
+Após o treinamento e otimização de hiperparâmetros, o modelo foi colocado para gerar o seu próprio Ranking Global de Seleções e, depois, foi feita uma comparação com o Top 10 oficial da FIFA.
+
+O modelo destacou seleções **"subestimadas"** pela FIFA (que possuem alta sinergia coletiva) e rebaixou seleções **"superestimadas"** (cheias de estrelas isoladas).
+
+| ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
+|---------|-------------|------------------|-----------|---------------------|
+| 1 | Mexico | 16.377579 | Outside Top 10 | N/A |
+| 2 | Slovenia | 12.706712 | Outside Top 10 | N/A |
+| 3 | Germany | 12.129295 | 8.0 | ↑ +5 |
+| 4 | Hungary | 11.655042 | Outside Top 10 | N/A |
+| 5 | South Africa | 10.813668 | Outside Top 10 | N/A |
+| 6 | Spain | 10.655080 | 3.0 | ↓ -3 |
+| 7 | Austria | 10.469560 | Outside Top 10 | N/A |
+| 8 | Colombia | 10.405928 | Outside Top 10 | N/A |
+| 9 | Ecuador | 10.204608 | Outside Top 10 | N/A |
+| 10 | United States | 10.188136 | Outside Top 10 | N/A |
+| 11 | England | 10.108611 | 4.0 | ↓ -7 |
+| 12 | Korea, South | 9.831403 | Outside Top 10 | N/A |
+| 13 | Sierra Leone | 9.810265 | Outside Top 10 | N/A |
+| 14 | Uruguay | 9.745632 | Outside Top 10 | N/A |
+| 15 | Brazil | 9.714988 | 5.0 | ↓ -10 |
+
+**Legenda:** ↑ O ML valoriza mais o país (pela sinergia) do que a FIFA | ↓ O ML valoriza menos.
+
+---
+
+### Configuração do Ambiente (Setup)
+
+Este projeto utiliza o `uv` como gerenciador de pacotes e ambientes virtuais, garantindo uma instalação rápida e isolada.
+
+#### 1. Instalação do `uv`
+
+Se o `uv` ainda não está instalado, abra o seu terminal:
 
 **No Linux ou macOS:**
 ```bash
-curl -LsSf [https://astral.sh/uv/install.sh](https://astral.sh/uv/install.sh) | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 **No Windows via PowerShell:**
-```bash
-powershell -ExecutionPolicy ByPass -c "irm [https://astral.sh/uv/install.ps1](https://astral.sh/uv/install.ps1) | iex"
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
-*( Após a instalação pode ser necessário reiniciar o terminal para que o comando `uv` seja reconhecido )*
 
-### 2. Clonagem do repositório
-Baixe o código para sua máquina e entre na pasta do projeto.
+#### 2. Clonagem do repositório
 
 ```bash
-git clone [https://github.com/hugoprd/fifa-country-ranking.git](https://github.com/hugoprd/fifa-country-ranking.git)
+git clone https://github.com/hugoprd/fifa-country-ranking.git
 cd fifa-country-ranking
 ```
 
-### 3. Instalação das dependências e criação do ambiente
-Rode o comando `uv` para a criação e sincronização do ambiente com o repositório, na raíz do projeto.
+#### 3. Setup Automático
 
+O projeto conta com scripts automatizados para instalar as dependências e rodar todo o pipeline (Dados -> Modelo -> Inferência) com apenas dois comandos.
+
+**No Linux / macOS:**
 ```bash
-uv sync
+./setup.sh
+./run_all.sh
 ```
 
-### 4. Ativação do ambiente virtual
+> ⚠️ **Aviso para usuários Windows:** A execução dos scripts batch (`.bat`) automatizados no Windows não foi exaustivamente testada e comportamentos inesperados (erros de caminhos ou de ambiente) podem ocorrer. Caso os scripts falhem, recomenda-se a instalação manual das dependências e a execução individual dos módulos Python.
 
-**No Linux ou macOS:**
-```bash
-source .venv/bin/activate
+```bat
+setup.bat
+run_all.bat
 ```
 
-**No Windows:**
-```bash
-.venv\Scripts\activate
-```
+---
 
-----------------------------------------------------------------------
+## EN-US
 
-# [EN-US]
+### The Problem: Measuring Synergy
 
-# Data
+The official FIFA Ranking evaluates national teams based on a simple calculation of wins, draws, and losses. However, modern football is complex. A national team with 11 superstars who have never played together often loses to a less famous but highly synergized team.
 
-The data used in this project comes from multiple sources, including FootyStats (Club World Cup), Wikipedia (continental competitions), and Kaggle/Transfermarkt (player and match statistics).
+The goal of this project is to answer a fundamental question:
 
-The data pipeline is structured using a Medallion Architecture (Bronze, Silver, and Gold), focused on processing raw statistics to quantify individual efficiency and synergy among compatriots, always weighted by the difficulty (weight) of the league they play in.
+> "Can we predict the true strength of a national team by measuring exclusively the individual quality of its players and the synergy (chemistry) between them from their club experience?"
 
-For full details on the origin of the data, the Feature Engineering process, and how to run the automated extraction and refinement pipeline, **[click here to read the complete Data documentation (`data/` folder)](./data/README.md)**.
+---
 
-# Environment Setup
+### Data and Limitations
 
-This project uses [uv](https://github.com/astral-sh/uv) as its package and virtual environment manager, ensuring an extremely fast and isolated installation.
+Building this pipeline required gathering data from multiple sources (FootyStats, Wikipedia, Transfermarkt and FBref). The pipeline consolidates this information into three main refined datasets:
 
-Follow the step-by-step guide below to set up the project on your machine:
+- `ml_individual_features.csv`: Individual player efficiency statistics.
+- `ml_national_synergy_features.csv`: The mapping of who plays (or has played) with whom in the same club.
+- `ml_national_team_ranking.csv`: The target variable for the model training.
 
-### 1. `uv` instalation
-If you don't have `uv` installed yet, open your terminal and run the command corresponding to your operating system:
+> ⚠️ **Known Limitations:**
+>
+> During the data engineering phase, we encountered some real-world constraints:
+>
+> - **Scarce Time Window:** It was only able to gather reliable and granular data from the period between 2018 and 2025.
+> - **Confederation Weights:** It was mathematically challenging to establish a perfect "weight" to compare the difficulty between UEFA (Europe) and CONMEBOL (South America) leagues against other confederations, due to the lack of frequent direct matches between clubs from different continents outside the Club World Cup.
+
+---
+
+### Artificial Intelligence: Why Transformers?
+
+To solve the synergy problem, the **Transformer** architecture was chosen, but applied to sports.
+
+Instead of processing "words in a sentence", our model processes **"players in a squad"**.
+
+It was transformed the players' synergy data into **Graphs (Adjacency Matrices)**. When the Transformer uses its **Self-Attention** mechanism, it looks at this matrix and automatically understands which players have previous "connections" in clubs. Thus, the model learns to give more weight to small, highly synergized groups (e.g., a midfield trio that has played on the same team for 3 years).
+
+---
+
+### Results: Model vs Official FIFA
+
+After training and hyperparameter optimization, it was deployed our model to generate its own Global National Team Ranking and then a comparison was made with the official FIFA Top 10.
+
+The model highlighted **"underrated"** teams by FIFA (which possess high collective synergy) and downgraded **"overrated"** teams (packed with isolated stars).
+
+| ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
+|---------|-------------|------------------|-----------|---------------------|
+| 1 | Mexico | 16.377579 | Outside Top 10 | N/A |
+| 2 | Slovenia | 12.706712 | Outside Top 10 | N/A |
+| 3 | Germany | 12.129295 | 8.0 | ↑ +5 |
+| 4 | Hungary | 11.655042 | Outside Top 10 | N/A |
+| 5 | South Africa | 10.813668 | Outside Top 10 | N/A |
+| 6 | Spain | 10.655080 | 3.0 | ↓ -3 |
+| 7 | Austria | 10.469560 | Outside Top 10 | N/A |
+| 8 | Colombia | 10.405928 | Outside Top 10 | N/A |
+| 9 | Ecuador | 10.204608 | Outside Top 10 | N/A |
+| 10 | United States | 10.188136 | Outside Top 10 | N/A |
+| 11 | England | 10.108611 | 4.0 | ↓ -7 |
+| 12 | Korea, South | 9.831403 | Outside Top 10 | N/A |
+| 13 | Sierra Leone | 9.810265 | Outside Top 10 | N/A |
+| 14 | Uruguay | 9.745632 | Outside Top 10 | N/A |
+| 15 | Brazil | 9.714988 | 5.0 | ↓ -10 |
+
+**Legend:** ↑ ML values the country more (due to synergy) than FIFA | ↓ ML values it less.
+
+---
+
+### Environment Setup
+
+This project uses `uv` as its package and virtual environment manager, ensuring an extremely fast and isolated installation.
+
+#### 1. `uv` Installation
+
+If you don't have `uv` installed yet, open your terminal:
 
 **On Linux or macOS:**
 ```bash
-curl -LsSf [https://astral.sh/uv/install.sh](https://astral.sh/uv/install.sh) | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 **On Windows via PowerShell:**
-```bash
-powershell -ExecutionPolicy ByPass -c "irm [https://astral.sh/uv/install.ps1](https://astral.sh/uv/install.ps1) | iex"
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-*( After installation, you might need to restart your terminal for the `uv` command to be recognized )*
-
-### 2. Repository clone
-Download the code to your machine and navigate into the project folder.
+#### 2. Repository Clone
 
 ```bash
-git clone [https://github.com/hugoprd/fifa-country-ranking.git](https://github.com/hugoprd/fifa-country-ranking.git)
+git clone https://github.com/hugoprd/fifa-country-ranking.git
 cd fifa-country-ranking
 ```
 
-### 3. Dependencies install and environment creation
-Run the `uv` commandto create and synchronize the environment of the repository, into the project root.
+#### 3. Automatic Setup
 
+The project features automated scripts to install dependencies and run the entire pipeline (Data -> Model -> Inference) with just two commands.
+
+**On Linux / macOS:**
 ```bash
-uv sync
+./setup.sh
+./run_all.sh
 ```
 
-### 4. Virtual environment activation
+> ⚠️ **Notice for Windows users:** The execution of the automated batch (`.bat`) scripts on Windows has not been exhaustively tested and unexpected behavior (path or environment errors) may occur. If the scripts fail, it is recommended to manually install the dependencies and execute the Python modules individually.
 
-**On Linux or macOS:**
-```bash
-source .venv/bin/activate
-```
-
-**On Windows:**
-```bash
-.venv\Scripts\activate
+```bat
+setup.bat
+run_all.bat
 ```
