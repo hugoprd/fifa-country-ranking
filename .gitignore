@@ -9,3 +9,6 @@ data/external_metadata/*
 logs/*
 !logs/__init__.py
 !logs/set_logger.py
+
+# model scripts
+ml_model_scripts/transformers_architecture.json
