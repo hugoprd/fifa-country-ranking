@@ -1,3 +1,5 @@
+from loguru import logger
+
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -19,14 +21,24 @@ class SynergyAttention(nn.Module):
         self.num_heads = num_heads
         self.attention = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
-    def forward(self, x, synergy_mask):
+    def forward(self, x, synergy_mask, key_padding_mask=None):
         # x shape: (Batch, Num_Players, Embed_Dim)
         # synergy_mask shape: (Batch, Num_Players, Num_Players)
+        # key_padding_mask shape: (Batch, Num_Players), True = ignore this player (padding)
+
+        combined_mask = synergy_mask
+        if key_padding_mask is not None:
+            # merge the bool padding mask into the float synergy bias ourselves, instead of
+            # passing both to nn.MultiheadAttention. mixing a float attn_mask with a bool
+            # key_padding_mask goes through PyTorch's deprecated merge path, which produced
+            # NaN losses in practice. using one unified float mask avoids that path entirely
+            pad_bias = torch.zeros_like(synergy_mask).masked_fill(key_padding_mask.unsqueeze(1), float("-inf"))
+            combined_mask = synergy_mask + pad_bias
 
         # PyTorch requires the 3D mask to be shaped as (Batch * Num_Heads, Seq_Len, Seq_Len)
         # it's needed to repeat the mask along the first dimension for each attention head
         # .repeat_interleave copies the mask for each head sequentially
-        adjusted_mask = synergy_mask.repeat_interleave(self.num_heads, dim=0)
+        adjusted_mask = combined_mask.repeat_interleave(self.num_heads, dim=0)
 
         attn_output, _ = self.attention(query=x, key=x, value=x, attn_mask=adjusted_mask, is_causal=False)
 
@@ -51,14 +63,37 @@ class FIFANationalTeamDataset(Dataset):
         self.feature_cols = ["total_matches", "total_weighted_wins", "total_weighted_plus_minus", "win_rate_percentage"]
 
         # build the list of available countries
-        self.countries = self.df_target["national_team"].unique()
+        all_target_countries = self.df_target["national_team"].unique()
+
+        # a country with ZERO rows in df_ind would get a 100%-padding mask, i.e. an
+        # attention row that is -inf in every column. softmax of an all -inf row is
+        # undefined (NaN), and that single NaN poisons every model weight forever via
+        # the optimizer step - this is what was causing the permanent NaN loss.
+        # this mismatch usually means the country name differs between data sources
+        # (e.g. "USA" vs "United States"); fixing the source data is the real fix,
+        # this just keeps training from breaking until you do.
+        countries_with_players = set(self.df_ind["national_team"].unique())
+        missing_countries = [c for c in all_target_countries if c not in countries_with_players]
+        if missing_countries:
+            logger.warning(
+                "[ MODEL EXTENSIONS | FIFA NATIONAL TEAM DATASET ] Excluding countries with no "
+                f"individual player data: {missing_countries}"
+            )
+        self.countries = [c for c in all_target_countries if c in countries_with_players]
+
+        # pre-build every country's tensors ONCE. This data is static (it doesn't depend on
+        # model weights), so recomputing it via DataFrame filtering + .iterrows() inside
+        # __getitem__ meant redoing the same slow pandas work on every single epoch
+        # (112 countries x 150 epochs) - that's was causing a multi-minute hang
+        self._cache = [self._build_sample(country) for country in self.countries]
 
     def __len__(self):
         return len(self.countries)
 
     def __getitem__(self, idx):
-        country = self.countries[idx]
+        return self._cache[idx]
 
+    def _build_sample(self, country):
         #### ==========================================
         # 1. TAKE PLAYERS (INDIVIDUAL TENSOR)
         #### ==========================================
@@ -69,6 +104,12 @@ class FIFANationalTeamDataset(Dataset):
 
         # gets the "Top 11". if the country has less than 11 players, "padding" is needed (fill with zeros)
         top_players = country_players.head(self.top_k)
+        num_real_players = len(top_players)
+
+        # True = padded slot (no real player). Used to exclude "ghost" players from
+        # attention (key_padding_mask) and from the final pooling average.
+        padding_mask = torch.ones(self.top_k, dtype=torch.bool)
+        padding_mask[:num_real_players] = False
 
         # prepair matix [11, Num_Features]
         num_features = len(self.feature_cols)
@@ -114,4 +155,4 @@ class FIFANationalTeamDataset(Dataset):
         # in the future, can change this column
         target = torch.tensor([target_row["avg_synergy_score"]], dtype=torch.float32)
 
-        return player_tensor, synergy_tensor, target
+        return player_tensor, synergy_tensor, padding_mask, target
