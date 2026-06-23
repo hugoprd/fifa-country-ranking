@@ -12,3 +12,6 @@ logs/*
 
 # model scripts
 ml_model_scripts/transformers_architecture.json
+
+# models
+models/*
