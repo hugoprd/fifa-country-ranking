@@ -11,6 +11,7 @@ logs/*
 !logs/set_logger.py
 
 # model scripts
+ml_model_scripts/__pycache__
 ml_model_scripts/transformers_architecture.json
 
 # models
@@ -18,3 +19,6 @@ models/*
 
 # fifa ranking
 ml_fifa_ranking.csv
+
+# utils
+ml_model_scripts/utils/__pycache__
