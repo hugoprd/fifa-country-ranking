@@ -128,7 +128,7 @@ O projeto conta com scripts automatizados para instalar as dependências e rodar
 
 ```bat
 cmd/environment_setup.bat
-cmdrun_all.bat
+cmd/run_all.bat
 ```
 
 ---
