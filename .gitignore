@@ -17,4 +17,4 @@ ml_model_scripts/transformers_architecture.json
 models/*
 
 # fifa ranking
-ai_fifa_ranking.csv
+ml_fifa_ranking.csv
