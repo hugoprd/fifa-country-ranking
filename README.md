@@ -115,15 +115,15 @@ O projeto conta com scripts automatizados para instalar as dependências e rodar
 
 **No Linux / macOS:**
 ```bash
-./setup.sh
-./run_all.sh
+./cmd/environment_setup.sh
+./cmd/run_all.sh
 ```
 
 > ⚠️ **Aviso para usuários Windows:** A execução dos scripts batch (`.bat`) automatizados no Windows não foi exaustivamente testada e comportamentos inesperados (erros de caminhos ou de ambiente) podem ocorrer. Caso os scripts falhem, recomenda-se a instalação manual das dependências e a execução individual dos módulos Python.
 
 ```bat
-setup.bat
-run_all.bat
+cmd/environment_setup.bat
+cmd/run_all.bat
 ```
 
 ---
@@ -221,13 +221,13 @@ The project features automated scripts to install dependencies and run the entir
 
 **On Linux / macOS:**
 ```bash
-./setup.sh
-./run_all.sh
+./cmd/environment_setup.sh
+./cmd/run_all.sh
 ```
 
 > ⚠️ **Notice for Windows users:** The execution of the automated batch (`.bat`) scripts on Windows has not been exhaustively tested and unexpected behavior (path or environment errors) may occur. If the scripts fail, it is recommended to manually install the dependencies and execute the Python modules individually.
 
 ```bat
-setup.bat
-run_all.bat
+cmd/environment_setup.bat
+cmd/run_all.bat
 ```
