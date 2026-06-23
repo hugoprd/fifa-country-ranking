@@ -69,21 +69,16 @@ O modelo destacou seleções **"subestimadas"** pela FIFA (que possuem alta sine
 
 | ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
 |---------|-------------|------------------|-----------|---------------------|
-| 1 | Mexico | 16.377579 | Outside Top 10 | N/A |
-| 2 | Slovenia | 12.706712 | Outside Top 10 | N/A |
-| 3 | Germany | 12.129295 | 8.0 | ↑ +5 |
-| 4 | Hungary | 11.655042 | Outside Top 10 | N/A |
-| 5 | South Africa | 10.813668 | Outside Top 10 | N/A |
-| 6 | Spain | 10.655080 | 3.0 | ↓ -3 |
-| 7 | Austria | 10.469560 | Outside Top 10 | N/A |
-| 8 | Colombia | 10.405928 | Outside Top 10 | N/A |
-| 9 | Ecuador | 10.204608 | Outside Top 10 | N/A |
-| 10 | United States | 10.188136 | Outside Top 10 | N/A |
-| 11 | England | 10.108611 | 4.0 | ↓ -7 |
-| 12 | Korea, South | 9.831403 | Outside Top 10 | N/A |
-| 13 | Sierra Leone | 9.810265 | Outside Top 10 | N/A |
-| 14 | Uruguay | 9.745632 | Outside Top 10 | N/A |
-| 15 | Brazil | 9.714988 | 5.0 | ↓ -10 |
+| 1 | Germany | 1.114792 | 8.0 | ↑ +7 |
+| 2 | Brazil | 0.898887 | 5.0 | ↑ +3 |
+| 3 | Spain | 0.801684 | 3.0 | — = |
+| 4 | England | 0.770999 | 4.0 | — = |
+| 5 | France | 0.723544 | 2.0 | ↓ -3 |
+| 6 | Netherlands | 0.681522 | 7.0 | ↑ +1 |
+| 7 | Portugal | 0.658164 | 9.0 | ↑ +2 |
+| 8 | Belgium | 0.640771 | 10.0 | ↑ +2 |
+| 9 | Argentina | 0.618244 | 1.0 | ↓ -8 |
+| 10 | Scotland | 0.548400 | Outside Top 10 | N/A |
 
 **Legenda:** ↑ O ML valoriza mais o país (pela sinergia) do que a FIFA | ↓ O ML valoriza menos.
 
@@ -180,21 +175,16 @@ The model highlighted **"underrated"** teams by FIFA (which possess high collect
 
 | ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
 |---------|-------------|------------------|-----------|---------------------|
-| 1 | Mexico | 16.377579 | Outside Top 10 | N/A |
-| 2 | Slovenia | 12.706712 | Outside Top 10 | N/A |
-| 3 | Germany | 12.129295 | 8.0 | ↑ +5 |
-| 4 | Hungary | 11.655042 | Outside Top 10 | N/A |
-| 5 | South Africa | 10.813668 | Outside Top 10 | N/A |
-| 6 | Spain | 10.655080 | 3.0 | ↓ -3 |
-| 7 | Austria | 10.469560 | Outside Top 10 | N/A |
-| 8 | Colombia | 10.405928 | Outside Top 10 | N/A |
-| 9 | Ecuador | 10.204608 | Outside Top 10 | N/A |
-| 10 | United States | 10.188136 | Outside Top 10 | N/A |
-| 11 | England | 10.108611 | 4.0 | ↓ -7 |
-| 12 | Korea, South | 9.831403 | Outside Top 10 | N/A |
-| 13 | Sierra Leone | 9.810265 | Outside Top 10 | N/A |
-| 14 | Uruguay | 9.745632 | Outside Top 10 | N/A |
-| 15 | Brazil | 9.714988 | 5.0 | ↓ -10 |
+| 1 | Germany | 1.114792 | 8.0 | ↑ +7 |
+| 2 | Brazil | 0.898887 | 5.0 | ↑ +3 |
+| 3 | Spain | 0.801684 | 3.0 | — = |
+| 4 | England | 0.770999 | 4.0 | — = |
+| 5 | France | 0.723544 | 2.0 | ↓ -3 |
+| 6 | Netherlands | 0.681522 | 7.0 | ↑ +1 |
+| 7 | Portugal | 0.658164 | 9.0 | ↑ +2 |
+| 8 | Belgium | 0.640771 | 10.0 | ↑ +2 |
+| 9 | Argentina | 0.618244 | 1.0 | ↓ -8 |
+| 10 | Scotland | 0.548400 | Outside Top 10 | N/A |
 
 **Legend:** ↑ ML values the country more (due to synergy) than FIFA | ↓ ML values it less.
 
