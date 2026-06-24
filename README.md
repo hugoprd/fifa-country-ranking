@@ -1,7 +1,6 @@
 # fifa-country-ranking
 
-> A Transformer-based ML model to predict FIFA rankings. It uses a bottom-up approach, weighting player attributes based on league difficulty derived from continental tournament data.
-
+> Modelo de Machine Learning baseado em Transformers para estimar a força de seleções nacionais de futebol a partir dos atributos individuais e da sinergia entre os jogadores em seus clubes, em vez do histórico de resultados utilizado pela FIFA.
 
 <div align="center">
 
@@ -24,154 +23,200 @@
 
 ## PT-BR
 
-### O Problema: Medindo a Sinergia
+### 1. Visão Geral
 
-O Ranking oficial da FIFA avalia as seleções nacionais com base em um cálculo simples de vitórias, empates e derrotas. No entanto, o futebol moderno é complexo. Uma seleção com 11 superestrelas que nunca jogaram juntas muitas vezes perde para uma equipe menos badalada, mas altamente entrosada.
+Este projeto estima a posição de uma seleção nacional de futebol em um ranking mundial a partir de uma fonte de informação diferente da utilizada pela FIFA. Em vez de basear a avaliação no histórico de resultados da própria seleção, o modelo parte do desempenho individual de cada jogador em seu clube e da sinergia (entrosamento) entre jogadores do mesmo país que atuam juntos fora das datas de seleção.
 
-O objetivo deste projeto é responder a uma pergunta fundamental:
+### 2. Como Funciona o Ranking Oficial da FIFA
 
-> "Podemos prever a força real de uma seleção nacional medindo exclusivamente a qualidade individual de seus jogadores e a sinergia (entrosamento) entre eles nos clubes?"
+Desde agosto de 2018, o ranking oficial da FIFA é calculado por um sistema baseado no método Elo, originalmente desenvolvido para o xadrez. A cada partida oficial, a pontuação de uma seleção é atualizada pela fórmula:
 
----
+`P = P_anterior + I × (W − We)`
 
-### Os Dados e Limitações
+Onde:
+- `I` é o peso de importância da partida (de 5 pontos em amistosos fora das datas FIFA a 60 pontos nas fases decisivas da Copa do Mundo);
+- `W` é o resultado da partida (1 para vitória, 0,5 para empate, 0 para derrota; pênaltis contam como vitória ou derrota);
+- `We` é o resultado esperado, calculado exclusivamente a partir da diferença de pontuação Elo entre as duas seleções.
 
-A construção desse pipeline exigiu a coleta de dados de diversas fontes (FootyStats, Wikipedia, Transfermarkt e FBref). O pipeline consolida essas informações em três bases principais refinadas:
+Esse sistema não utiliza nenhum atributo individual de jogador, nem informações de desempenho em clubes: ele depende somente do histórico de resultados oficiais da própria seleção. Por ser uma fórmula matemática determinística e bem definida, um modelo de Machine Learning dificilmente agregaria valor caso utilizasse os mesmos insumos da FIFA. Por esse motivo, este projeto adota uma fonte de dados completamente diferente, descrita a seguir.
 
-- `ml_individual_features.csv`: Estatísticas de eficiência de cada jogador.
-- `ml_national_synergy_features.csv`: O mapeamento de quem joga (ou já jogou) com quem no mesmo clube.
-- `ml_national_team_ranking.csv`: O alvo (target) para o treinamento do modelo.
+### 3. Abordagem do Projeto: Sinergia entre Jogadores
 
-> ⚠️ **Limitações Encontradas:**
->
-> Durante a engenharia de dados, esbarramos em algumas restrições do mundo real:
->
-> - **Janela de Tempo Escassa:** Foi possível a coleta de dados confiáveis e granulares apenas do período entre 2018 e 2025.
-> - **Pesos das Confederações:** Foi matematicamente difícil estabelecer um "peso" perfeito para comparar a dificuldade entre ligas da UEFA (Europa) e CONMEBOL (América do Sul) com as demais confederações, devido à falta de confrontos diretos frequentes entre clubes de continentes diferentes fora do Mundial de Clubes.
+A hipótese investigada é a seguinte: é possível estimar a força real de uma seleção observando exclusivamente a qualidade individual de seus jogadores e a sinergia construída entre eles em seus clubes, sem usar o histórico de resultados da seleção? A motivação é que uma seleção formada por jogadores individualmente fortes que nunca jogaram juntos pode ter desempenho inferior ao de outra com jogadores menos célebres, porém mais entrosados entre si.
 
----
+Para medir a competência de um jogador, isoladamente e em conjunto com outro, foi adotado o saldo de gols da partida como métrica, em vez da participação direta em gols (marcação ou assistência). Essa escolha evita um viés sistemático contra jogadores de posições defensivas, que raramente participam diretamente de gols, mas cuja qualidade impacta diretamente o resultado da partida.
 
-### Inteligência Artificial: Por que Transformers?
+Cada jogador também recebe um peso proporcional à dificuldade da confederação em que seu clube atua (UEFA, CONMEBOL, CAF, CONCACAF, AFC), calculado a partir do desempenho histórico de cada confederação na Copa do Mundo de Clubes. Isso evita equiparar um jogador irrelevante em um clube da UEFA a um jogador irrelevante em um clube de uma confederação historicamente mais fraca.
 
-Para resolver o problema da sinergia, foi escolhido a arquitetura **Transformer**, mas aplicada a esportes.
+### 4. O Modelo de Machine Learning
 
-Em vez de processar "palavras em uma frase", nosso modelo processa **"jogadores em um elenco"**.
+Trata-se de um modelo de **aprendizado supervisionado de regressão** — não é um modelo de classificação nem de clusterização. A cada seleção é associado um único valor numérico contínuo, que representa sua força estimada, treinado por retropropagação do erro minimizando o erro quadrático médio (MSE) contra um valor de referência calculado a partir da sinergia agregada entre jogadores compatriotas.
 
-Foi transformado os dados de sinergia dos jogadores em **Grafos (Matrizes de Adjacência)**. Quando o Transformer usa seu mecanismo de **Self-Attention (Atenção)**, ele olha para essa matriz e entende automaticamente quais jogadores possuem "conexões" prévias em clubes. Assim, o modelo aprende a dar mais peso para pequenos grupos entrosados (ex: um trio de meio-campo que joga no mesmo time há 3 anos).
+A arquitetura é um **Transformer Encoder** — o mesmo bloco básico de auto-atenção usado em LLMs, porém aplicado a um problema de regressão sobre dados estruturados, e não à geração de texto. Cada um dos 11 jogadores principais de uma seleção é tratado como um "token", representado por um vetor de atributos (partidas jogadas, vitórias ponderadas, saldo de gols ponderado, percentual de vitórias). Em vez de uma atenção genérica entre os jogadores, a auto-atenção é tendenciada por uma matriz de sinergia par a par, informando ao modelo quais jogadores já construíram entrosamento em seus clubes. Seleções com menos de 11 jogadores mapeados recebem posições de preenchimento, explicitamente excluídas do cálculo via máscara dedicada.
 
----
+Resumo técnico:
+- **Tipo de aprendizado:** supervisionado;
+- **Tipo de tarefa:** regressão (saída numérica contínua);
+- **Arquitetura:** Transformer Encoder com atenção tendenciada por grafo de sinergia;
+- **Função de perda:** erro quadrático médio (MSE);
+- **Otimizador:** Adam, com agendamento de taxa de aprendizado por cosseno e recorte de gradiente;
+- **Seleção de hiperparâmetros:** validação cruzada em 5 partições sobre combinações de dimensão de embedding, número de cabeças de atenção e número de camadas.
 
-### Resultados: Modelo vs FIFA Oficial
+A explicação detalhada da arquitetura está no relatório técnico do projeto.
 
-Após o treinamento e otimização de hiperparâmetros, o modelo foi colocado para gerar o seu próprio Ranking Global de Seleções e, depois, foi feita uma comparação com o Top 10 oficial da FIFA.
+### 5. Pipeline de Dados
 
-O modelo destacou seleções **"subestimadas"** pela FIFA (que possuem alta sinergia coletiva) e rebaixou seleções **"superestimadas"** (cheias de estrelas isoladas).
+Os dados vêm do FootyStats (competições globais), da Wikipedia (competições continentais) e do dataset "Football Data from Transfermarkt" no Kaggle (estatísticas de jogadores e partidas). O pipeline segue três camadas:
 
-| ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
+- **Raw:** dados originais, sem alterações.
+- **Processed:** cálculo dos pesos de confederação a partir da Copa do Mundo de Clubes e mapeamento de cada clube/jogador à sua confederação.
+- **Refined:** geração dos três datasets finais usados no treinamento — `ml_individual_features.csv` (eficiência individual), `ml_national_synergy_features.csv` (matriz de sinergia entre pares de compatriotas) e `ml_national_team_ranking.csv` (alvo de treinamento).
+
+> **Limitações encontradas:** dados confiáveis e granulares só estavam disponíveis entre 2018 e 2025; e foi matematicamente difícil estabelecer pesos perfeitos entre confederações de continentes diferentes, dada a escassez de confrontos diretos fora da Copa do Mundo de Clubes.
+
+### 6. Resultados: Modelo vs Ranking Oficial da FIFA
+
+Após o treinamento, o modelo gerou seu próprio ranking global de seleções, comparado a seguir ao Top 10 oficial da FIFA:
+
+| ML Rank | Seleção | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
 |---------|-------------|------------------|-----------|---------------------|
-| 1 | Germany | 1.114792 | 8.0 | ↑ +7 |
-| 2 | Brazil | 0.898887 | 5.0 | ↑ +3 |
-| 3 | Spain | 0.801684 | 3.0 | — = |
-| 4 | England | 0.770999 | 4.0 | — = |
-| 5 | France | 0.723544 | 2.0 | ↓ -3 |
-| 6 | Netherlands | 0.681522 | 7.0 | ↑ +1 |
+| 1 | Alemanha | 1.114792 | 8.0 | ↑ +7 |
+| 2 | Brasil | 0.898887 | 5.0 | ↑ +3 |
+| 3 | Espanha | 0.801684 | 3.0 | — = |
+| 4 | Inglaterra | 0.770999 | 4.0 | — = |
+| 5 | França | 0.723544 | 2.0 | ↓ -3 |
+| 6 | Países Baixos | 0.681522 | 7.0 | ↑ +1 |
 | 7 | Portugal | 0.658164 | 9.0 | ↑ +2 |
-| 8 | Belgium | 0.640771 | 10.0 | ↑ +2 |
+| 8 | Bélgica | 0.640771 | 10.0 | ↑ +2 |
 | 9 | Argentina | 0.618244 | 1.0 | ↓ -8 |
-| 10 | Scotland | 0.548400 | Outside Top 10 | N/A |
+| 10 | Escócia | 0.548400 | Fora do Top 10 | N/A |
 
-**Legenda:** ↑ O ML valoriza mais o país (pela sinergia) do que a FIFA | ↓ O ML valoriza menos.
+**Legenda:** ↑ o modelo valoriza mais o país (pela sinergia) do que a FIFA | ↓ o modelo valoriza menos | — = mesma posição.
 
----
+### 7. Trabalhos Futuros
 
-### Configuração do Ambiente (Setup)
+Uma direção futura para o projeto é substituir, ou complementar, o saldo de gols da equipe como métrica de desempenho individual por notas de desempenho atribuídas a cada jogador em cada partida específica, disponíveis em bases de dados como o SofaScore ou outras fontes gratuitas e de fácil acesso que ofereçam esse tipo de informação. Por serem calculadas partida a partida e associadas diretamente à atuação individual do jogador, essas notas tendem a capturar com mais precisão aspectos do desempenho não refletidos no saldo de gols da equipe, tornando a medição de eficiência individual e de sinergia mais fiel ao desempenho real de cada jogador.
 
-Este projeto utiliza o `uv` como gerenciador de pacotes e ambientes virtuais, garantindo uma instalação rápida e isolada.
+### 8. Como Executar o Projeto
 
-#### 1. Instalação do `uv`
+**Pré-requisitos:** Git, acesso à internet (para scraping e download de dados) e uma conta no Kaggle (necessária para a etapa 8.3).
 
-Se o `uv` ainda não está instalado, abra o seu terminal:
+#### 8.1. Instalação do `uv`
 
-**No Linux ou macOS:**
 ```bash
+# Linux ou macOS
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-
-**No Windows via PowerShell:**
 ```powershell
+# Windows (PowerShell)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-#### 2. Clonagem do repositório
+#### 8.2. Clonagem do repositório
 
 ```bash
 git clone https://github.com/hugoprd/fifa-country-ranking.git
 cd fifa-country-ranking
 ```
 
-#### 3. Setup Automático
+#### 8.3. Preparação manual de dados (obrigatória antes do pipeline)
 
-O projeto conta com scripts automatizados para instalar as dependências e rodar todo o pipeline (Dados -> Modelo -> Inferência) com apenas dois comandos.
+Dois insumos não são obtidos automaticamente pelos scripts e precisam existir antes de rodar o pipeline:
 
-**No Linux / macOS:**
+1. **Dataset Transfermarkt (Kaggle):** baixar `appearances.csv`, `players.csv`, `clubs.csv`, `competitions.csv` e `games.csv` em <https://www.kaggle.com/datasets/davidcariboo/player-scores> e copiá-los para `data/raw/`.
+2. **`cwc_confederations_map.csv`:** arquivo com as colunas `team_name` e `confederation`, posicionado em `data/external_metadata/`. Nenhum script do repositório gera esse arquivo automaticamente; ele precisa ser criado ou fornecido manualmente antes de executar `process_data.py`.
+
+#### 8.4. Execução automática completa
+
 ```bash
 ./cmd/environment_setup.sh
 ./cmd/run_all.sh
 ```
 
-> ⚠️ **Aviso para usuários Windows:** A execução dos scripts batch (`.bat`) automatizados no Windows não foi exaustivamente testada e comportamentos inesperados (erros de caminhos ou de ambiente) podem ocorrer. Caso os scripts falhem, recomenda-se a instalação manual das dependências e a execução individual dos módulos Python.
+> **Aviso para usuários Windows:** os scripts `.bat` não foram exaustivamente testados; em caso de falha, prefira a execução manual descrita abaixo.
 
 ```bat
-cmd/environment_setup.bat
-cmd/run_all.bat
+cmd\environment_setup.bat
+cmd\run_all.bat
 ```
+
+#### 8.5. Execução manual por etapas (alternativa)
+
+```bash
+# 1. Pipeline de dados (na ordem)
+python data/extract_external_metadata.py
+python data/extract_data.py
+python data/process_data.py
+python data/refine_data.py
+
+# 2. Pipeline de modelo (na ordem)
+python ml_model_scripts/architecture_loader.py
+python ml_model_scripts/train_model.py
+python ml_model_scripts/generate_fifa_ranking.py
+```
+
+#### 8.6. Saída esperada
+
+Ao final, o ranking gerado pelo modelo fica disponível em `ml_fifa_ranking.csv`, na raiz do projeto, e a comparação com o Top 10 oficial da FIFA é impressa no terminal.
 
 ---
 
 ## EN-US
 
-### The Problem: Measuring Synergy
+### 1. Overview
 
-The official FIFA Ranking evaluates national teams based on a simple calculation of wins, draws, and losses. However, modern football is complex. A national team with 11 superstars who have never played together often loses to a less famous but highly synergized team.
+This project estimates a national football team's position in a global ranking using a source of information different from the one used by FIFA. Instead of basing the evaluation on the national team's own match history, the model relies on the individual performance of each player at their club and the synergy (chemistry) between players from the same country who play together outside national-team duty.
 
-The goal of this project is to answer a fundamental question:
+### 2. How the Official FIFA Ranking Works
 
-> "Can we predict the true strength of a national team by measuring exclusively the individual quality of its players and the synergy (chemistry) between them from their club experience?"
+Since August 2018, the official FIFA ranking has been calculated using a system based on the Elo method, originally developed for chess. After every official match, a team's score is updated using the formula:
 
----
+`P = P_before + I × (W − We)`
 
-### Data and Limitations
+Where:
+- `I` is the match importance weight (from 5 points for friendlies outside FIFA dates to 60 points for decisive World Cup stages);
+- `W` is the match result (1 for a win, 0.5 for a draw, 0 for a loss; penalty shoot-outs count as a win or loss);
+- `We` is the expected result, calculated solely from the Elo point difference between the two teams.
 
-Building this pipeline required gathering data from multiple sources (FootyStats, Wikipedia, Transfermarkt and FBref). The pipeline consolidates this information into three main refined datasets:
+This system uses no individual player attributes and no club-level performance data: it depends only on the national team's own official match history. Because it is a deterministic, well-defined mathematical formula, a Machine Learning model would add little value if fed the same inputs as FIFA. For this reason, this project relies on a completely different data source, described below.
 
-- `ml_individual_features.csv`: Individual player efficiency statistics.
-- `ml_national_synergy_features.csv`: The mapping of who plays (or has played) with whom in the same club.
-- `ml_national_team_ranking.csv`: The target variable for the model training.
+### 3. Project Approach: Player Synergy
 
-> ⚠️ **Known Limitations:**
->
-> During the data engineering phase, we encountered some real-world constraints:
->
-> - **Scarce Time Window:** It was only able to gather reliable and granular data from the period between 2018 and 2025.
-> - **Confederation Weights:** It was mathematically challenging to establish a perfect "weight" to compare the difficulty between UEFA (Europe) and CONMEBOL (South America) leagues against other confederations, due to the lack of frequent direct matches between clubs from different continents outside the Club World Cup.
+The hypothesis investigated here is the following: can the real strength of a national team be estimated by looking exclusively at the individual quality of its players and the synergy built between them at club level, without using the national team's match history? The motivation is that a team made up of individually strong players who never played together can underperform compared to a less famous, but better-synchronized, team.
 
----
+To measure a player's competence, both individually and jointly with another player, the goal difference of the match was used as the metric, instead of direct goal involvement (scoring or assisting). This choice avoids a systematic bias against defensive players, who rarely participate directly in goals but whose quality directly affects the match outcome.
 
-### Artificial Intelligence: Why Transformers?
+Each player also receives a weight proportional to the difficulty of the confederation their club competes in (UEFA, CONMEBOL, CAF, CONCACAF, AFC), calculated from each confederation's historical performance in the Club World Cup. This avoids treating an irrelevant player at a UEFA club the same as an irrelevant player at a club from a historically weaker confederation.
 
-To solve the synergy problem, the **Transformer** architecture was chosen, but applied to sports.
+### 4. The Machine Learning Model
 
-Instead of processing "words in a sentence", our model processes **"players in a squad"**.
+This is a **supervised regression model** — not a classification model and not a clustering model. Each national team is mapped to a single continuous numeric value representing its estimated strength, trained via backpropagation by minimizing the mean squared error (MSE) against a reference value computed from the aggregated synergy between compatriot players.
 
-It was transformed the players' synergy data into **Graphs (Adjacency Matrices)**. When the Transformer uses its **Self-Attention** mechanism, it looks at this matrix and automatically understands which players have previous "connections" in clubs. Thus, the model learns to give more weight to small, highly synergized groups (e.g., a midfield trio that has played on the same team for 3 years).
+The architecture is a **Transformer Encoder** — the same self-attention building block used in LLMs, but applied to a regression problem over structured data rather than text generation. Each of a team's 11 main players is treated as a "token", represented by a feature vector (matches played, weighted wins, weighted goal difference, win-rate percentage). Instead of generic attention between players, self-attention is biased by a pairwise synergy matrix that tells the model which players have already built chemistry at their clubs. Teams with fewer than 11 mapped players receive padding slots, explicitly excluded from the computation through a dedicated mask.
 
----
+Technical summary:
+- **Learning type:** supervised;
+- **Task type:** regression (continuous numeric output);
+- **Architecture:** Transformer Encoder with attention biased by a synergy graph;
+- **Loss function:** mean squared error (MSE);
+- **Optimizer:** Adam, with cosine learning-rate scheduling and gradient clipping;
+- **Hyperparameter selection:** 5-fold cross-validation over combinations of embedding dimension, number of attention heads, and number of layers.
 
-### Results: Model vs Official FIFA
+A detailed explanation of the architecture is provided in the project's technical report.
 
-After training and hyperparameter optimization, it was deployed our model to generate its own Global National Team Ranking and then a comparison was made with the official FIFA Top 10.
+### 5. Data Pipeline
 
-The model highlighted **"underrated"** teams by FIFA (which possess high collective synergy) and downgraded **"overrated"** teams (packed with isolated stars).
+Data comes from FootyStats (global competitions), Wikipedia (continental competitions), and the "Football Data from Transfermarkt" Kaggle dataset (player and match statistics). The pipeline follows three layers:
+
+- **Raw:** original data, unmodified.
+- **Processed:** confederation weight calculation from the Club World Cup and mapping of each club/player to its confederation.
+- **Refined:** generation of the three final training datasets — `ml_individual_features.csv` (individual efficiency), `ml_national_synergy_features.csv` (pairwise synergy matrix between compatriots) and `ml_national_team_ranking.csv` (training target).
+
+> **Known limitations:** reliable, granular data was only available between 2018 and 2025; and it was mathematically difficult to establish perfect weights between confederations from different continents, given the scarcity of direct matches outside the Club World Cup.
+
+### 6. Results: Model vs Official FIFA Ranking
+
+After training, the model produced its own global national-team ranking, compared below to the official FIFA Top 10:
 
 | ML Rank | Country | ML Synergy Power | FIFA Rank | ML vs FIFA (Delta) |
 |---------|-------------|------------------|-----------|---------------------|
@@ -186,48 +231,70 @@ The model highlighted **"underrated"** teams by FIFA (which possess high collect
 | 9 | Argentina | 0.618244 | 1.0 | ↓ -8 |
 | 10 | Scotland | 0.548400 | Outside Top 10 | N/A |
 
-**Legend:** ↑ ML values the country more (due to synergy) than FIFA | ↓ ML values it less.
+**Legend:** ↑ the model values the country more (due to synergy) than FIFA | ↓ the model values it less | — = same position.
 
----
+### 7. Future Work
 
-### Environment Setup
+One future direction for the project is to replace, or complement, the team's goal difference as an individual performance metric with per-match player ratings, available from databases such as SofaScore or other free, easily accessible sources that provide this kind of information. Since these ratings are calculated match by match and tied directly to the player's individual performance, they tend to capture aspects of performance not reflected in the team's goal difference more precisely, making the measurement of individual efficiency and synergy more faithful to each player's actual performance.
 
-This project uses `uv` as its package and virtual environment manager, ensuring an extremely fast and isolated installation.
+### 8. How to Run the Project
 
-#### 1. `uv` Installation
+**Prerequisites:** Git, internet access (for scraping and data download), and a Kaggle account (required for step 8.3).
 
-If you don't have `uv` installed yet, open your terminal:
+#### 8.1. Installing `uv`
 
-**On Linux or macOS:**
 ```bash
+# Linux or macOS
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-
-**On Windows via PowerShell:**
 ```powershell
+# Windows (PowerShell)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-#### 2. Repository Clone
+#### 8.2. Cloning the repository
 
 ```bash
 git clone https://github.com/hugoprd/fifa-country-ranking.git
 cd fifa-country-ranking
 ```
 
-#### 3. Automatic Setup
+#### 8.3. Manual data preparation (required before running the pipeline)
 
-The project features automated scripts to install dependencies and run the entire pipeline (Data -> Model -> Inference) with just two commands.
+Two inputs are not fetched automatically by the scripts and must exist before running the pipeline:
 
-**On Linux / macOS:**
+1. **Transfermarkt dataset (Kaggle):** download `appearances.csv`, `players.csv`, `clubs.csv`, `competitions.csv` and `games.csv` from <https://www.kaggle.com/datasets/davidcariboo/player-scores> and copy them into `data/raw/`.
+2. **`cwc_confederations_map.csv`:** a file with the columns `team_name` and `confederation`, placed in `data/external_metadata/`. No script in the repository generates this file automatically; it must be created or provided manually before running `process_data.py`.
+
+#### 8.4. Full automatic execution
+
 ```bash
 ./cmd/environment_setup.sh
 ./cmd/run_all.sh
 ```
 
-> ⚠️ **Notice for Windows users:** The execution of the automated batch (`.bat`) scripts on Windows has not been exhaustively tested and unexpected behavior (path or environment errors) may occur. If the scripts fail, it is recommended to manually install the dependencies and execute the Python modules individually.
+> **Notice for Windows users:** the `.bat` scripts have not been exhaustively tested; if they fail, prefer the manual execution described below.
 
 ```bat
-cmd/environment_setup.bat
-cmd/run_all.bat
+cmd\environment_setup.bat
+cmd\run_all.bat
 ```
+
+#### 8.5. Manual step-by-step execution (alternative)
+
+```bash
+# 1. Data pipeline (in order)
+python data/extract_external_metadata.py
+python data/extract_data.py
+python data/process_data.py
+python data/refine_data.py
+
+# 2. Model pipeline (in order)
+python ml_model_scripts/architecture_loader.py
+python ml_model_scripts/train_model.py
+python ml_model_scripts/generate_fifa_ranking.py
+```
+
+#### 8.6. Expected output
+
+At the end, the model's generated ranking is available at `ml_fifa_ranking.csv`, in the project root, and the comparison with the official FIFA Top 10 is printed to the terminal.
