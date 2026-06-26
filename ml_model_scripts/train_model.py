@@ -10,10 +10,12 @@ from logs.set_logger import setup_logger
 import tqdm
 import json
 import copy
+import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
+from sklearn.metrics import mean_absolute_error, r2_score
 
 from utils.model_extensions import SynergyAttention, FIFANationalTeamDataset
 
@@ -33,13 +35,10 @@ class NationalTeamTransformer(nn.Module):
     The complete model: From individual player statistics to national team ranking.
     """
 
-    def __init__(self, num_features, embed_dim=64, num_heads=4, num_layers=2):
+    def __init__(self, num_features, embed_dim=64, num_heads=4, num_layers=2, dropout=0.1):
         super().__init__()
-
-        # 1. input Embedding: transforms the player numeric stats into a Dense Vector
         self.player_embedding = nn.Linear(num_features, embed_dim)
 
-        # 2. transformer layers with the Synergy Attention
         self.layers = nn.ModuleList([SynergyAttention(embed_dim, num_heads) for _ in range(num_layers)])
         self.feed_forwards = nn.ModuleList(
             [
@@ -47,97 +46,57 @@ class NationalTeamTransformer(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        # Pre-LN: normalization before each sub-layer (attn/FF), stabilizes the residual stream.
-        # a "Transformer" without LayerNorm is the most likely cause of the loss spikes in the log
         self.attn_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_layers)])
         self.ff_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_layers)])
+        # dropout on the residual branches only (not on the residual path itself), the
+        # standard transformer placement. with only 78 training samples and 100k+
+        # parameters, this is the single cheapest lever against overfitting.
+        self.dropout = nn.Dropout(dropout)
 
-        # 3. prediction Head (Regression for predicting FIFA Points/Ranking)
-        self.regressor = nn.Sequential(
-            nn.Linear(embed_dim, 32), nn.ReLU(), nn.Linear(32, 1)  # returns a single number (the team's points)
-        )
+        self.regressor = nn.Sequential(nn.Linear(embed_dim, 32), nn.ReLU(), nn.Linear(32, 1))
 
     def forward(self, players, synergy_matrix, key_padding_mask=None):
-        """
-        players: Tensor of shape (Batch_Size, 11, Num_Features) -> The 11 starters
-        synergy_matrix: Tensor of shape (Batch_Size, 11, 11) -> The chemistry between the 11
-        key_padding_mask: Bool tensor (Batch_Size, 11), True = slot is padding (country had < 11 players).
-        """
-        # pass the player attributes to create the initial token
         x = self.player_embedding(players)
 
-        # pass through the Transformer (Pre-LN: normalize before attn/FF, then residual add)
         for attn, ff, attn_norm, ff_norm in zip(self.layers, self.feed_forwards, self.attn_norms, self.ff_norms):
             attended = attn(attn_norm(x), synergy_mask=synergy_matrix, key_padding_mask=key_padding_mask)
-            x = x + attended  # Conexão Residual
+            x = x + self.dropout(attended)
 
             forwarded = ff(ff_norm(x))
-            x = x + forwarded
+            x = x + self.dropout(forwarded)
 
-        # Masked Average Pooling: excludes padded ("ghost") player slots from the team average,
-        # instead of plain x.mean(dim=1), which would dilute real players with padding zeros
-        # for any country fielding fewer than 11 known players.
         if key_padding_mask is not None:
-            real_player_mask = (~key_padding_mask).unsqueeze(-1).float()  # (Batch, 11, 1)
+            real_player_mask = (~key_padding_mask).unsqueeze(-1).float()
             summed = (x * real_player_mask).sum(dim=1)
             count = real_player_mask.sum(dim=1).clamp(min=1.0)
             team_representation = summed / count
         else:
             team_representation = x.mean(dim=1)
 
-        # calculates the final strength/ranking
         ranking_points = self.regressor(team_representation)
-
         return ranking_points
 
 
 def _verify_model_parameters() -> tuple[bool, dict | list | None]:
-    """
-    Verifies if the JSON transformers_architecture file exists, is not empty, and contains useful data.
-    """
     logger.info("[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] Verifying the transformers_architecture.json file...")
-
     json_path = ROOT_DIR / "ml_model_scripts/transformers_architecture.json"
 
-    if not json_path.is_file():
-        logger.error("[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] The transformers_architecture.json file does not exist.")
-
-        return False, None
-
-    # 1. fisical verification: the file exists and has size greater than 0 bytes
-    if not json_path.exists() or json_path.stat().st_size == 0:
+    if not json_path.is_file() or json_path.stat().st_size == 0:
         logger.error("[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] The file does not exist or is empty.")
-
         return False, None
 
-    # 2. logic verification: JSON is valid and contains keys/items?
     try:
         with open(json_path, "r", encoding="utf-8") as arquivo:
             data = json.load(arquivo)
-
             if data:
-                logger.info(f"[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] Success. The file contains {len(data)} items/keys.")
-
                 return True, data
             else:
-                logger.error(
-                    "[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] The file is a valid JSON, but is empty (e.g., {} or [])."
-                )
-
                 return False, None
     except json.JSONDecodeError:
-        logger.error(
-            "[ TRAIN MODEL | VERIFY MODEL PARAMETERS ] The file it's not empty, "
-            "but the JSON format is invalid or is corrupted."
-        )
-
         return False, None
 
 
 def train_model():
-    """
-    Starts the training of the Transformer model using the data from the refine/ folder.
-    """
     logger.info("[ TRAIN MODEL ] Loading the real data and starting training...")
 
     ind_path = REFINED_DATA_PATH / "ml_individual_features.csv"
@@ -146,54 +105,54 @@ def train_model():
 
     if not all(p.exists() for p in [ind_path, pairs_path, target_path]):
         logger.error("[ TRAIN MODEL ] CSV files not found at the refined folder!")
-
         return
 
     #### ==========================================
-    # 1. create the Dataset and DataLoader
+    # 1. Dataset, Random Split and DataLoaders
     #### ==========================================
-
-    # Batch size = 4 ; means the model looks at 4 countries at the same time before updating the weights
     dataset = FIFANationalTeamDataset(ind_path, pairs_path, target_path, top_k_players=11)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
-    logger.success(f"[ TRAIN MODEL ] Dataset loaded. Total national teams: {len(dataset)}")
+    total_size = len(dataset)
+    # separating 20% for test, 10% for validation and 70% for training
+    test_size = int(0.20 * total_size)
+    val_size = int(0.10 * total_size)
+    train_size = total_size - test_size - val_size
+
+    # the generator with 'manual_seed' guarantees that the random cut will be equal if we run the script 2 times in a row
+    generator = torch.Generator().manual_seed(42)
+    train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size], generator=generator)
+
+    # only need the train to be shuffle. validation and test don't need
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    logger.success(f"[ TRAIN MODEL ] Dataset Split: {train_size} Train | {val_size} Validation | {test_size} Test")
 
     #### ==========================================
     # 2. instantiate the Model
     #### ==========================================
-
-    # verifies the transformers_architecture.json file and loads the parameters
     valid, architecture_data = _verify_model_parameters()
 
     if not valid or architecture_data is None:
-        logger.error("[ TRAIN MODEL ] Invalid or missing transformers_architecture.json file. Cannot proceed with training.")
+        logger.error("[ TRAIN MODEL ] Invalid or missing transformers_architecture.json file.")
 
         return
 
-    # defines de initial model
     initial_model = NationalTeamTransformer(
-        num_features=4,  # 4: total_matches, total_weighted_wins, total_weighted_plus_minus, win_rate_percentage
+        num_features=4,
         embed_dim=architecture_data["embed_dim"],
         num_heads=architecture_data["num_heads"],
         num_layers=architecture_data["num_layers"],
     )
 
     actual_params = sum(p.numel() for p in initial_model.parameters() if p.requires_grad)
-    ideal_params = architecture_data.get("trainable_params")
-
     logger.info(f"[ TRAIN MODEL ] Actual Trainable Parameters in PyTorch: {actual_params}")
 
-    if ideal_params:
-        if actual_params == ideal_params:
-            logger.success("[ TRAIN MODEL ] Parameter count matches the ideal architecture exactly!")
-        else:
-            logger.warning(f"[ TRAIN MODEL ] Parameter mismatch. Ideal: {ideal_params} | PyTorch Actual: {actual_params}")
-
     #### ==========================================
-    # 3. hyperparameter test loop
+    # 3. hyperparameter test loop (Using Validation Set)
     #### ==========================================
-    epochs = 200  # base number
+    epochs = 200
 
     configs_to_test = [
         {
@@ -221,60 +180,52 @@ def train_model():
         {"embed_dim": 64, "num_heads": 4, "num_layers": 3},
         {"embed_dim": 64, "num_heads": 8, "num_layers": 1},
         {"embed_dim": 64, "num_heads": 8, "num_layers": 2},
-        # -- 128 DIMENSIONS --
-        {"embed_dim": 128, "num_heads": 1, "num_layers": 1},
-        {"embed_dim": 128, "num_heads": 2, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 4, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 4, "num_layers": 3},
-        {"embed_dim": 128, "num_heads": 8, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 8, "num_layers": 3},
     ]
 
-    best_loss = float("inf")  # starts with a infinit error
+    best_val_loss = float("inf")
     best_config = None
 
-    logger.info("[ TRAIN MODEL ] Hyperparameter test started.")
+    logger.info("[ TRAIN MODEL ] Hyperparameter test started (Evaluating on Validation Set).")
     for i, config in enumerate(configs_to_test):
-        logger.info(f"\n[ TRAIN MODEL ] Starting Session {i + 1}/{len(configs_to_test)} | Config: {config}")
 
         actual_model = NationalTeamTransformer(
-            num_features=4,  # 4: total_matches, total_weighted_wins, total_weighted_plus_minus, win_rate_percentage
+            num_features=4,
             embed_dim=config["embed_dim"],
             num_heads=config["num_heads"],
             num_layers=config["num_layers"],
         )
 
         criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(actual_model.parameters(), lr=0.001)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        optimizer = torch.optim.Adam(actual_model.parameters(), lr=0.001, weight_decay=1e-4)
 
-        actual_model.train()
+        for epoch in tqdm.tqdm(range(epochs), desc="Train Hyperparameters Epochs", unit="epoch", colour="white"):
+            actual_model.train()
 
-        for epoch in tqdm.tqdm(range(epochs), desc="Hyperparameter Test Epochs", unit="epoch", colour="white", leave=False):
-            epoch_loss = 0.0
-
-            for players, synergy_mask, padding_mask, targets in dataloader:
+            for players, synergy_mask, padding_mask, targets in train_loader:
                 optimizer.zero_grad()
                 predictions = actual_model(players, synergy_mask, key_padding_mask=padding_mask)
                 loss = criterion(predictions, targets)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(actual_model.parameters(), max_norm=1.0)
                 optimizer.step()
-                epoch_loss += loss.item()
 
-            avg_loss = epoch_loss / len(dataloader)
-            scheduler.step()
+        actual_model.eval()
+        val_loss = 0.0
 
-        logger.info(f"[ TRAIN MODEL ] Hyperparameter Test Session {epoch+1}/{epochs} Completed. Final Loss: {avg_loss:.4f}")
+        with torch.no_grad():
+            for players, synergy_mask, padding_mask, targets in val_loader:
+                preds = actual_model(players, synergy_mask, key_padding_mask=padding_mask)
+                loss = criterion(preds, targets)
+                val_loss += loss.item()
 
-        if avg_loss < best_loss:
-            logger.success(f"[ TRAIN MODEL ] New Best Model found. Loss dropped from {best_loss:.4f} to {avg_loss:.4f}")
+        val_loss /= len(val_loader)
 
-            best_loss = avg_loss
+        if val_loss < best_val_loss:
+            logger.success(f"[ TRAIN MODEL ] New Best Model. Val Loss dropped to {val_loss:.4f} | Config: {config}")
+            best_val_loss = val_loss
             best_config = config
 
     logger.info("=" * 32)
-    logger.success(f"[ TRAIN MODEL ] Best Configuration : {best_config}\nLowest Error (Loss): {best_loss:.4f}")
+    logger.success(f"[ TRAIN MODEL ] Best Configuration : {best_config}")
 
     new_data = {
         "num_features": 4,
@@ -282,79 +233,101 @@ def train_model():
         "num_heads": best_config["num_heads"],
         "num_layers": best_config["num_layers"],
         "trainable_params": actual_params,
-        "avg_val_mse": best_loss,
+        "avg_val_mse": best_val_loss,
     }
 
     json_path = ROOT_DIR / "ml_model_scripts/transformers_architecture.json"
-
     with open(json_path, "w", encoding="utf-8") as file:
         json.dump(new_data, file, indent=4, ensure_ascii=False)
 
-    logger.success(f"[ TRAIN MODEL ] {json_path.name} successfully updated with the best hyperparameters.")
-
+    #### ==========================================
+    # 4. Final Training with Checkpointing
+    #### ==========================================
     final_model = NationalTeamTransformer(
-        num_features=4,  # 4: total_matches, total_weighted_wins, total_weighted_plus_minus, win_rate_percentage
+        num_features=4,
         embed_dim=best_config["embed_dim"],
         num_heads=best_config["num_heads"],
         num_layers=best_config["num_layers"],
     )
 
-    logger.info("[ TRAIN MODEL ] Starting final model train with the best configuration...")
+    logger.info("[ TRAIN MODEL ] Starting final model train...")
 
-    final_epochs = 300
-    final_model.train()
-
-    best_final_loss = float("inf")
+    final_epochs = 350
+    best_final_val_loss = float("inf")
     best_final_weights = None
-    best_epoch = 0
 
-    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001)
-    final_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(final_optimizer, T_max=final_epochs)
+    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001, weight_decay=1e-4)
+    criterion = nn.MSELoss()
 
     for epoch in tqdm.tqdm(range(final_epochs), desc="Final Train Epochs", unit="epoch", colour="white"):
-        epoch_loss = 0.0
+        # TRAINING
+        final_model.train()
 
-        for players, synergy_mask, padding_mask, targets in dataloader:
+        for players, synergy_mask, padding_mask, targets in train_loader:
             final_optimizer.zero_grad()
-            predictions = actual_model(players, synergy_mask, key_padding_mask=padding_mask)
+            predictions = final_model(players, synergy_mask, key_padding_mask=padding_mask)
             loss = criterion(predictions, targets)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(final_model.parameters(), max_norm=1.0)
             final_optimizer.step()
-            epoch_loss += loss.item()
 
-        avg_loss = epoch_loss / len(dataloader)
-        final_scheduler.step()
+        # VALIDATION (Early Stopping / Checkpoint)
+        final_model.eval()
+        current_val_loss = 0.0
 
-        if avg_loss < best_final_loss:
-            best_final_loss = avg_loss
-            best_epoch = epoch + 1  # noqa: F841
+        with torch.no_grad():
+            for players, synergy_mask, padding_mask, targets in val_loader:
+                preds = final_model(players, synergy_mask, key_padding_mask=padding_mask)
+                loss = criterion(preds, targets)
+                current_val_loss += loss.item()
+
+        current_val_loss /= len(val_loader)
+
+        # if the validation get better, get the weights
+        if current_val_loss < best_final_val_loss:
+            best_final_val_loss = current_val_loss
             best_final_weights = copy.deepcopy(final_model.state_dict())
 
-        logger.info(f"[ TRAIN MODEL ] Final Train Session {epoch+1}/{final_epochs} Completed. Current Loss: {avg_loss:.4f}")
-
+    # run the best weigths during the loop
     final_model.load_state_dict(best_final_weights)
 
-    ideal_mse = architecture_data.get("avg_val_mse")
+    #### ==========================================
+    # 5. model evaluation (Test Set & Metrics)
+    #### ==========================================
+    logger.info("=" * 32)
+    logger.info("[ TRAIN MODEL ] Evaluating model on unseen TEST SET...")
 
-    if ideal_mse:
-        logger.info("=" * 32)
-        logger.info("[ TRAIN MODEL ] Comparing the best final training loss with the ideal validation MSE...")
-        logger.info(f"[ TRAIN MODEL ] Target Ideal MSE from Optimization : {ideal_mse:.4f}")
-        logger.info(f"[ TRAIN MODEL ] Best Training Loss Obtained        : {best_final_loss:.4f}")
+    final_model.eval()
+    all_predictions = []
+    all_targets = []
 
-        if best_final_loss <= ideal_mse:
-            logger.success("[ TRAIN MODEL ] The model successfully reached or surpassed the ideal validation target!")
-        else:
-            logger.warning(
-                "[ TRAIN MODEL ] The model did not reach the ideal target. Consider adjusting epochs or learning rate."
-            )
+    with torch.no_grad():
+        for players, synergy_mask, padding_mask, targets in test_loader:
+            preds = final_model(players, synergy_mask, key_padding_mask=padding_mask)
+            all_predictions.extend(preds.cpu().numpy())
+            all_targets.extend(targets.cpu().numpy())
 
-    model_path = model_save_path = ROOT_DIR / "models"
+    all_predictions = np.array(all_predictions).flatten()
+    all_targets = np.array(all_targets).flatten()
+
+    # MSE/val_loss above is intentionally measured in normalized (z-score) space, so it
+    # stays comparable across configs regardless of the target's raw scale. MAE and R2
+    # are reported back in the original "FIFA Points" scale for interpretability.
+    all_predictions = all_predictions * dataset.target_std + dataset.target_mean
+    all_targets = all_targets * dataset.target_std + dataset.target_mean
+
+    # calculation of the new metrics
+    mae = mean_absolute_error(all_targets, all_predictions)
+    r2 = r2_score(all_targets, all_predictions)
+
+    logger.success(f"[ TRAIN MODEL ] Mean Absolute Error (MAE): {mae:.2f} FIFA Points")
+    logger.success(f"[ TRAIN MODEL ] R-Squared (R2 Score)     : {r2:.4f} ({(r2*100):.1f}%)")
+    logger.info("=" * 32)
+
+    model_path = ROOT_DIR / "models"
     model_path.mkdir(parents=True, exist_ok=True)
-
     model_save_path = model_path / "best_transformer_model.pth"
     torch.save(final_model.state_dict(), model_save_path)
+
     logger.success(f"[ TRAIN MODEL ] Model weights successfully saved at: {model_save_path}")
 
 

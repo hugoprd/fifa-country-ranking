@@ -77,8 +77,10 @@ def generate_fifa_ranking():
             # goes through the net
             predicted_score_tensor = model(players, synergy_mask, key_padding_mask=padding_mask)
 
-            # gets the tensor number
+            # gets the tensor number, then undoes the z-score normalization applied
+            # to the training target so ml_synergy_power stays in the original scale
             predicted_score = predicted_score_tensor.item()
+            predicted_score = predicted_score * dataset.target_std + dataset.target_mean
 
             predictions_list.append({"national_team": country_name, "ml_synergy_power": predicted_score})
 
