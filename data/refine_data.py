@@ -132,9 +132,9 @@ def _calculate_winrate_plus_minus(
     app_games["is_win"] = (app_games["plus_minus"] > 0).astype(int)
     app_games["is_draw"] = (app_games["plus_minus"] == 0).astype(int)
 
-    # bring the player's data (Name, Country, Confederation Weight)
+    # bring the player's data (Name, Country, Confederation Weight, Position)
     app_enriched = app_games.merge(
-        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight"]],
+        df_players[["player_id", "name", "country_of_citizenship", "confederation_weight", "position"]],
         on="player_id",
         how="inner",
         suffixes=("_app", "_player"),  # adding suffixes to avoid column name collision
@@ -164,9 +164,28 @@ def _calculate_individual_efficiency(app_enriched: pd.DataFrame) -> pd.DataFrame
     app_enriched["weighted_win"] = app_enriched["is_win"] * app_enriched["confederation_weight"]
     app_enriched["weighted_plus_minus"] = app_enriched["plus_minus"] * app_enriched["confederation_weight"]
 
+    # standardizes Transfermarkt's raw position label into the GK/DEF/MID/ATT codes used
+    # by TacticalOptimizer.tactics_map. Rows with no/unknown position can't be slotted into
+    # a formation, so they're dropped here rather than silently breaking the lineup search.
+    position_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfield": "MID", "Attack": "ATT"}
+    raw_position = app_enriched["position"].astype(str).str.strip()
+    mapped_position = raw_position.str.title().map(position_map)
+
+    unmapped_mask = mapped_position.isna()
+    unmapped = int(unmapped_mask.sum())
+    if unmapped:
+        top_unmapped = raw_position[unmapped_mask].value_counts(dropna=False).head(10)
+        logger.warning(
+            f"[ REFINE DATA | CALCULATE INDIVIDUAL EFFICIENCY ] Dropping {unmapped} appearance rows with "
+            f"missing/unrecognized position. Most common raw values that didn't map:\n{top_unmapped.to_string()}"
+        )
+
+    app_enriched["position"] = mapped_position
+    app_enriched = app_enriched.dropna(subset=["position"])
+
     # group by player
     ind_matrix = (
-        app_enriched.groupby(["player_id", "name", "country_of_citizenship", "confederation_weight"])
+        app_enriched.groupby(["player_id", "name", "country_of_citizenship", "confederation_weight", "position"])
         .agg(
             total_matches=("game_id", "count"),
             total_wins=("is_win", "sum"),
