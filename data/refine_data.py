@@ -165,7 +165,7 @@ def _calculate_individual_efficiency(app_enriched: pd.DataFrame) -> pd.DataFrame
     app_enriched["weighted_plus_minus"] = app_enriched["plus_minus"] * app_enriched["confederation_weight"]
 
     # standardizes Transfermarkt's raw position label into the GK/DEF/MID/ATT codes used
-    # by TacticalOptimizer.tactics_map. Rows with no/unknown position can't be slotted into
+    # by TacticalOptimizer.tactics_map. rows with no/unknown position can't be slotted into
     # a formation, so they're dropped here rather than silently breaking the lineup search.
     position_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfield": "MID", "Attack": "ATT"}
     raw_position = app_enriched["position"].astype(str).str.strip()
