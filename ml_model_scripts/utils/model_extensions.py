@@ -184,8 +184,35 @@ class TacticalOptimizer:
     respecting the football position rules
     """
 
-    def __init__(self, trained_model):
+    # smallest pool size per position that still keeps every tactic in tactics_map feasible
+    # (e.g. 5-4-1 needs 5 DEF, 3-5-2 needs 5 MID, 4-3-3 needs 3 ATT) - going below this means
+    # that tactic can simply never be assembled, silently.
+    _MIN_POOL_SIZE = {"GK": 1, "DEF": 5, "MID": 5, "ATT": 3}
+
+    def __init__(self, trained_model, dataset, pool_sizes=None):
         self.model = trained_model
+        self.model.eval()
+
+        # reuses the EXACT normalization stats the model was trained with;
+        # recomputing mean/std from a squad subset would silently corrupt every score
+        self.feature_cols = dataset.feature_cols
+        self.feat_mean = dataset.feat_mean
+        self.feat_std = dataset.feat_std
+        self.df_pairs = dataset.df_pairs
+        self.synergy_std = dataset.synergy_std
+
+        # caps each position's candidate pool to the top-N players (by total_weighted_wins)
+        # BEFORE generating combinations. Without this, a real ~23-player squad blows up to
+        # hundreds of thousands of combinations per country (confirmed: it hangs). This keeps
+        # the search to "best individuals per position, let the model pick the best subset".
+        self.pool_sizes = pool_sizes or {"GK": 1, "DEF": 5, "MID": 5, "ATT": 3}
+        for position, minimum in self._MIN_POOL_SIZE.items():
+            if self.pool_sizes.get(position, 0) < minimum:
+                logger.warning(
+                    f"[ TACTICAL OPTIMIZER ] pool_sizes['{position}']={self.pool_sizes.get(position)} is below "
+                    f"the minimum of {minimum}; tactics requiring more than that many {position} players will "
+                    "never be evaluated."
+                )
 
         # Dicionário definindo a quantidade exata de posições por tática
         self.tactics_map = {
@@ -204,11 +231,18 @@ class TacticalOptimizer:
         best_tactic = None
         best_11 = None
 
-        # groups the available players by position
-        gk_pool = df_country_squad[df_country_squad["position"] == "GK"]
-        def_pool = df_country_squad[df_country_squad["position"] == "DEF"]
-        mid_pool = df_country_squad[df_country_squad["position"] == "MID"]
-        att_pool = df_country_squad[df_country_squad["position"] == "ATT"]
+        # groups the available players by position, keeping only the top-N candidates per
+        # position (by total_weighted_wins) - see self.pool_sizes
+        gk_pool = df_country_squad[df_country_squad["position"] == "GK"].nlargest(self.pool_sizes["GK"], "total_weighted_wins")
+        def_pool = df_country_squad[df_country_squad["position"] == "DEF"].nlargest(
+            self.pool_sizes["DEF"], "total_weighted_wins"
+        )
+        mid_pool = df_country_squad[df_country_squad["position"] == "MID"].nlargest(
+            self.pool_sizes["MID"], "total_weighted_wins"
+        )
+        att_pool = df_country_squad[df_country_squad["position"] == "ATT"].nlargest(
+            self.pool_sizes["ATT"], "total_weighted_wins"
+        )
 
         # tests each possible tatic
         for tactic_name, req in self.tactics_map.items():
@@ -242,8 +276,20 @@ class TacticalOptimizer:
         return best_tactic, best_score, best_11
 
     def _prepare_tensors(self, df_lineup):
-        """Função fictícia: Você precisa transformar o DataFrame filtrado de volta em Tensor"""
-        # players_tensor = torch.tensor(df_lineup[['feat1', 'feat2'...]].values, dtype=torch.float32)
-        # synergy_matrix = create_synergy_graph(df_lineup)
-        # return players_tensor, synergy_matrix
-        pass
+        """Converts an 11-player lineup slice into the same tensor format used in training."""
+        raw = torch.tensor(df_lineup[self.feature_cols].values, dtype=torch.float32)
+        players_tensor = (raw - torch.tensor(self.feat_mean)) / torch.tensor(self.feat_std)
+
+        n = len(df_lineup)
+        synergy_matrix = torch.zeros((n, n), dtype=torch.float32)
+        ids = df_lineup["player_id"].tolist()
+        id_to_idx = {pid: i for i, pid in enumerate(ids)}
+
+        relevant_pairs = self.df_pairs[self.df_pairs["player_id_A"].isin(ids) & self.df_pairs["player_id_B"].isin(ids)]
+        for _, prow in relevant_pairs.iterrows():
+            a, b = id_to_idx[prow["player_id_A"]], id_to_idx[prow["player_id_B"]]
+            weight = prow["total_weighted_wins"] / self.synergy_std
+            synergy_matrix[a, b] = weight
+            synergy_matrix[b, a] = weight
+
+        return players_tensor, synergy_matrix

@@ -152,7 +152,7 @@ def train_model():
     #### ==========================================
     # 3. hyperparameter test loop (Using Validation Set)
     #### ==========================================
-    epochs = 150
+    epochs = 200
 
     configs_to_test = [
         {
@@ -252,7 +252,7 @@ def train_model():
 
     logger.info("[ TRAIN MODEL ] Starting final model train...")
 
-    final_epochs = 300
+    final_epochs = 350
     best_final_val_loss = float("inf")
     best_final_weights = None
 
