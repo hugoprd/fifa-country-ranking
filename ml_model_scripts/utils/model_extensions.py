@@ -73,6 +73,15 @@ class FIFANationalTeamDataset(Dataset):
         self.feat_std = feat_df.std().values.astype("float32")
         self.feat_std[self.feat_std == 0] = 1.0
 
+        # global normalization of the target (avg_synergy_score). Without this, the
+        # regression target stays on its raw, unbounded, possibly heavy-tailed scale,
+        # so a handful of outlier countries can dominate the validation MSE just by
+        # being squared. z-scoring puts val_loss in an interpretable unit: ~1.0 means
+        # "as good as predicting the mean", well below 1.0 means the model is adding value.
+        self.target_mean = float(self.df_target["avg_synergy_score"].mean())
+        target_std = float(self.df_target["avg_synergy_score"].std())
+        self.target_std = target_std if target_std > 0 else 1.0
+
         # a country with ZERO rows in df_ind would get a 100%-padding mask, i.e. an
         # attention row that is -inf in every column. softmax of an all -inf row is
         # undefined (NaN), and that single NaN poisons every model weight forever via
@@ -129,6 +138,7 @@ class FIFANationalTeamDataset(Dataset):
         for i, (_, row) in enumerate(top_players.iterrows()):
             raw = torch.tensor([row[col] for col in self.feature_cols], dtype=torch.float32)
             player_tensor[i] = (raw - torch.tensor(self.feat_mean)) / torch.tensor(self.feat_std)
+            player_id_to_idx[row["player_id"]] = i
 
         #### ==========================================
         # 2. BUILDING THE SYNERGY MATRIX (ATTENTION)
@@ -161,7 +171,9 @@ class FIFANationalTeamDataset(Dataset):
         target_row = self.df_target[self.df_target["national_team"] == country].iloc[0]
         # here it's used the 'avg_synergy_score' that was calculated as the objective for the model to learn
         # in the future, can change this column
-        target = torch.tensor([target_row["avg_synergy_score"]], dtype=torch.float32)
+        raw_target = target_row["avg_synergy_score"]
+        normalized_target = (raw_target - self.target_mean) / self.target_std
+        target = torch.tensor([normalized_target], dtype=torch.float32)
 
         return player_tensor, synergy_tensor, padding_mask, target
 

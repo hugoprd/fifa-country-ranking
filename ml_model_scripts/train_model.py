@@ -35,7 +35,7 @@ class NationalTeamTransformer(nn.Module):
     The complete model: From individual player statistics to national team ranking.
     """
 
-    def __init__(self, num_features, embed_dim=64, num_heads=4, num_layers=2):
+    def __init__(self, num_features, embed_dim=64, num_heads=4, num_layers=2, dropout=0.1):
         super().__init__()
         self.player_embedding = nn.Linear(num_features, embed_dim)
 
@@ -48,6 +48,10 @@ class NationalTeamTransformer(nn.Module):
         )
         self.attn_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_layers)])
         self.ff_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_layers)])
+        # dropout on the residual branches only (not on the residual path itself), the
+        # standard transformer placement. with only 78 training samples and 100k+
+        # parameters, this is the single cheapest lever against overfitting.
+        self.dropout = nn.Dropout(dropout)
 
         self.regressor = nn.Sequential(nn.Linear(embed_dim, 32), nn.ReLU(), nn.Linear(32, 1))
 
@@ -56,10 +60,10 @@ class NationalTeamTransformer(nn.Module):
 
         for attn, ff, attn_norm, ff_norm in zip(self.layers, self.feed_forwards, self.attn_norms, self.ff_norms):
             attended = attn(attn_norm(x), synergy_mask=synergy_matrix, key_padding_mask=key_padding_mask)
-            x = x + attended
+            x = x + self.dropout(attended)
 
             forwarded = ff(ff_norm(x))
-            x = x + forwarded
+            x = x + self.dropout(forwarded)
 
         if key_padding_mask is not None:
             real_player_mask = (~key_padding_mask).unsqueeze(-1).float()
@@ -176,13 +180,6 @@ def train_model():
         {"embed_dim": 64, "num_heads": 4, "num_layers": 3},
         {"embed_dim": 64, "num_heads": 8, "num_layers": 1},
         {"embed_dim": 64, "num_heads": 8, "num_layers": 2},
-        # -- 128 DIMENSIONS --
-        {"embed_dim": 128, "num_heads": 1, "num_layers": 1},
-        {"embed_dim": 128, "num_heads": 2, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 4, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 4, "num_layers": 3},
-        {"embed_dim": 128, "num_heads": 8, "num_layers": 2},
-        {"embed_dim": 128, "num_heads": 8, "num_layers": 3},
     ]
 
     best_val_loss = float("inf")
@@ -199,7 +196,7 @@ def train_model():
         )
 
         criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(actual_model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(actual_model.parameters(), lr=0.001, weight_decay=1e-4)
 
         for epoch in tqdm.tqdm(range(epochs), desc="Train Hyperparameters Epochs", unit="epoch", colour="white"):
             actual_model.train()
@@ -259,11 +256,13 @@ def train_model():
     best_final_val_loss = float("inf")
     best_final_weights = None
 
-    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001)
+    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=0.001, weight_decay=1e-4)
+    criterion = nn.MSELoss()
 
     for epoch in tqdm.tqdm(range(final_epochs), desc="Final Train Epochs", unit="epoch", colour="white"):
         # TRAINING
         final_model.train()
+
         for players, synergy_mask, padding_mask, targets in train_loader:
             final_optimizer.zero_grad()
             predictions = final_model(players, synergy_mask, key_padding_mask=padding_mask)
@@ -310,12 +309,18 @@ def train_model():
     all_predictions = np.array(all_predictions).flatten()
     all_targets = np.array(all_targets).flatten()
 
+    # MSE/val_loss above is intentionally measured in normalized (z-score) space, so it
+    # stays comparable across configs regardless of the target's raw scale. MAE and R2
+    # are reported back in the original "FIFA Points" scale for interpretability.
+    all_predictions = all_predictions * dataset.target_std + dataset.target_mean
+    all_targets = all_targets * dataset.target_std + dataset.target_mean
+
     # calculation of the new metrics
     mae = mean_absolute_error(all_targets, all_predictions)
     r2 = r2_score(all_targets, all_predictions)
 
-    logger.success(f"[ TEST METRICS ] Mean Absolute Error (MAE): {mae:.2f} FIFA Points")
-    logger.success(f"[ TEST METRICS ] R-Squared (R2 Score)      : {r2:.4f} ({(r2*100):.1f}%)")
+    logger.success(f"[ TRAIN MODEL ] Mean Absolute Error (MAE): {mae:.2f} FIFA Points")
+    logger.success(f"[ TRAIN MODEL ] R-Squared (R2 Score)     : {r2:.4f} ({(r2*100):.1f}%)")
     logger.info("=" * 32)
 
     model_path = ROOT_DIR / "models"
